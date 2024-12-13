@@ -13,5 +13,5 @@ def this_charm():
 
 
 @pytest.fixture()
-def istio_core_context(this_charm):
+def this_charm_context(this_charm):
     yield Context(charm_type=this_charm)

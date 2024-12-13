@@ -8,7 +8,7 @@ summary: A Juju charm to operate Kiali
 description: |
   Kiali is a dashboard for Istio, providing visualization and control of your service mesh.
 
-config:
+#config:
 
 assumes:
   - k8s-api
@@ -35,9 +35,9 @@ containers:
   kiali:
     resource: kiali-image
 
-provides:
+#provides:
 
-requires:
+#requires:
 
 parts:
   charm:
