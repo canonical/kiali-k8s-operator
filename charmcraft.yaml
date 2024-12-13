@@ -1,0 +1,56 @@
+# Copyright 2024 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+name: kiali-k8s
+type: charm
+title: Kiali
+summary: A Juju charm to operate Kiali
+description: |
+  Kiali is a dashboard for Istio, providing visualization and control of your service mesh.
+
+config:
+
+assumes:
+  - k8s-api
+
+bases:
+  - build-on:
+    - name: ubuntu
+      channel: "22.04"
+      architectures: ["amd64"]
+    run-on:
+    - name: ubuntu
+      channel: "22.04"
+      architectures: ["amd64"]
+  - build-on:
+    - name: ubuntu
+      channel: "22.04"
+      architectures: ["arm64"]
+    run-on:
+    - name: ubuntu
+      channel: "22.04"
+      architectures: ["arm64"]
+
+containers:
+  kiali:
+    resource: kiali-image
+
+provides:
+
+requires:
+
+parts:
+  charm:
+    plugin: charm
+    # include rustc and cargo to compile pydantic
+    build-packages: [git, rustc, cargo]
+    charm-binary-python-packages:
+    - "pydantic>=2"
+    - "cryptography"
+    - "jsonschema"
+
+resources:
+  kiali-image:
+    type: oci-image
+    description: Kiali OCI image
+    upstream-source: quay.io/kiali/kiali:v2.2.0
