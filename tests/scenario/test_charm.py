@@ -9,7 +9,6 @@ from scenario import Container, PeerRelation, Relation, State
 
 from charm import KIALI_CONFIG_PATH
 
-
 REMOTE_PROMETHEUS_APP_NAME = "grafana"
 REMOTE_PROMETHEUS_MODEL = "some-model"
 REMOTE_PROMETHEUS_MODEL_UUID = "1"
