@@ -16,6 +16,7 @@ LOGGER = logging.getLogger(__name__)
 
 SOURCE_PATH = Path(__file__).parent
 
+
 class KialiCharm(ops.CharmBase):
     """Charm for managing Kiali."""
 

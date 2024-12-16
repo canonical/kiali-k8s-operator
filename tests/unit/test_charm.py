@@ -1,8 +1,6 @@
 # Copyright 2024 Canonical Ltd
 # See LICENSE file for licensing details.
 
-from unittest.mock import MagicMock, patch
-
 import ops
 import ops.testing
 import pytest
@@ -32,6 +30,6 @@ class TestCharm:
         """Assert that the default configuration can be validated and is accessible."""
         harness.begin()
 
-        parsed_config = harness.charm.parsed_config
+        # parsed_config = harness.charm.parsed_config
         # Assert an example config is as expected
         assert False, "Test not implemented"
