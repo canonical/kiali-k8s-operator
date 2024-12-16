@@ -31,13 +31,24 @@ bases:
       channel: "22.04"
       architectures: ["arm64"]
 
+charm-libs:
+  - lib: "grafana_k8s.grafana_source"
+    version: "0"
+
 containers:
   kiali:
     resource: kiali-image
 
+peers:
+  # TODO: Can we remove this?  Required for the grafana_datasource lib, but not for features we use.
+  grafana:
+    interface: grafana_peers
+
 #provides:
 
-#requires:
+requires:
+  prometheus:
+    interface: grafana_datasource
 
 parts:
   charm:

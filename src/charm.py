@@ -11,7 +11,8 @@ from typing import List
 
 import ops
 import yaml
-from ops import pebble, StatusBase
+from charms.grafana_k8s.v0.grafana_source import GrafanaSourceConsumer
+from ops import StatusBase, pebble
 from ops.pebble import Layer
 
 from config import CharmConfig
@@ -22,6 +23,10 @@ SOURCE_PATH = Path(__file__).parent
 
 KIALI_CONFIG_PATH = Path("/kiali-configuration/config.yaml")
 
+# TODO: Required by the GrafanaSourceConsumer library, but barely used in this charm.  Can we remove it?
+PEER = "grafana"
+
+
 class KialiCharm(ops.CharmBase):
     """Charm for managing Kiali."""
 
@@ -31,19 +36,38 @@ class KialiCharm(ops.CharmBase):
 
         self._container = self.unit.get_container("kiali")
 
+        # Connection to prometheus/grafana-source integration
+        self._prometheus_source = GrafanaSourceConsumer(self, "prometheus")
+        self.framework.observe(
+            self._prometheus_source.on.sources_changed,  # pyright: ignore
+            self._reconcile,
+        )
+        # Not sure we need this, but kept it here for completeness.
+        self.framework.observe(
+            self._prometheus_source.on.sources_to_delete_changed,  # pyright: ignore
+            self._reconcile,
+        )
+
         self.framework.observe(self.on.collect_unit_status, self.on_collect_status)
         self.framework.observe(self.on.config_changed, self._reconcile)
 
     def on_collect_status(self, e: ops.CollectStatusEvent):
         """Collect and report the statuses of the charm."""
+        # TODO: Extract the generation of these statuses to a helper method, that way other parts of the charm can know
+        #  if the charm is active too.
         statuses: List[StatusBase] = []
 
         if not self._container.can_connect():
             statuses.append(ops.WaitingStatus("Waiting for the Kiali container to be ready"))
-        # TODO: if prometheus relation missing, add a BlockedStatus
-        # TODO: add something that confirms the service is actually alive?  or maybe a check of the pebble checks?
-        #  see https://github.com/canonical/cos-lib/blob/main/src/cosl/coordinated_workers/worker.py#L246 for ideas
-        statuses.append(ops.ActiveStatus(""))
+
+        if not self._is_prometheus_source_available():
+            statuses.append(ops.BlockedStatus("Prometheus source is not available"))
+
+        if not self._is_kiali_available():
+            statuses.append(ops.WaitingStatus("Kiali is configured and container is ready, but Kiali is not available"))
+
+        if len(statuses) == 0:
+            statuses.append(ops.ActiveStatus())
 
         for status in statuses:
             e.add_status(status)
@@ -51,35 +75,48 @@ class KialiCharm(ops.CharmBase):
     def _reconcile(self, _event: ops.ConfigChangedEvent):
         """Reconcile the entire state of the charm."""
         self._configure_kiali_workload()
-        self.unit.status = ops.BlockedStatus("todo: implement reconcile")
 
     def _configure_kiali_workload(self):
-        """Configure the Kiali workload."""
+        """Configure the Kiali workload, if possible, logging errors otherwise.
+
+        This will generate and push the Kiali configuration to the container, restarting the service if necessary.  If
+        any known errors occur, they will be logged and this method will return without error.
+        """
         # TODO: Can I make this generic and share with other charms?
         name = "kiali"
-        layer = self._generate_kiali_layer()
-        if self._container.can_connect():
-            new_config = self._generate_kiali_config()
-            # TODO: Ensure this works as expected
-            should_restart = not _is_container_file_equal_to(self._container, KIALI_CONFIG_PATH, new_config)
-            self._container.push(KIALI_CONFIG_PATH, new_config, make_dirs=True)
-            self._container.add_layer(name, layer, combine=True)
-            self._container.autostart()
+        if not self._container.can_connect():
+            LOGGER.warning(f"Container is not ready, cannot configure {name}")
+            return
 
-            if should_restart:
-                LOGGER.info(f"new config detected for {name}, restarting the service")
-                self._container.replan()
+        layer = self._generate_kiali_layer()
+        try:
+            new_config = self._generate_kiali_config()
+        except GrafanaSourceError as e:
+            LOGGER.warning(f"Failed to generate {name} configuration, got error: {e}")
+            # TODO: actually shut down the service and remove the configuration
+            # LOGGER.warning(f"Shutting down {name} service and removing existing configuration")
+            return
+
+        # TODO: Ensure this works as expected
+        should_restart = not _is_container_file_equal_to(self._container, KIALI_CONFIG_PATH, new_config)
+        self._container.push(KIALI_CONFIG_PATH, new_config, make_dirs=True)
+        self._container.add_layer(name, layer, combine=True)
+        self._container.autostart()
+
+        if should_restart:
+            LOGGER.info(f"new config detected for {name}, restarting the service")
+            self._container.replan()
 
     def _generate_kiali_config(self) -> str:
         """Generate the Kiali configuration."""
+        prometheus_url = self._get_prometheus_source_url()
         config = {
             "auth": {
                 "strategy": "anonymous",
             },
             "external_services": {
                 "prometheus": {
-                    # TODO: Use the actual Prometheus endpoint
-                    "url": "http://prometheus.prometheus:9090"
+                    "url": prometheus_url
                 }
             },
             # TODO: Use the actual istio namespace
@@ -109,6 +146,45 @@ class KialiCharm(ops.CharmBase):
             }
         )
 
+    def _get_prometheus_source_url(self):
+        """Get the Prometheus source configuration.
+
+        Raises a SourceNotAvailableError if there are no sources or the data is not complete.
+        """
+        if not (prometheus_sources := self._prometheus_source.sources):
+            raise GrafanaSourceError("No Prometheus sources available")
+        if len(prometheus_sources) > 1:
+            raise GrafanaSourceError("Multiple Prometheus sources available, expected only one")
+        if not (url := prometheus_sources[0].get('url', None)):
+            raise GrafanaSourceError("Prometheus source data is incomplete - url not available")
+        return url
+
+    def _is_kiali_available(self):
+        """Return True if the Kiali workload is available, else False.
+
+        TODO: This is a placeholder implementation.  It confirms that we've written a Kiali configuration file, which is
+         a proxy for having successfully built the configuration and planned a layer.  It does not confirm that the
+         service is actually running and available.  This should be improved.
+        """
+        if not self._container.can_connect():
+            return False
+
+        try:
+            self._container.pull(KIALI_CONFIG_PATH)
+        except pebble.PathError as e:
+            LOGGER.info(f"Could not find Kiali configuration file: {e} - Kiali is not available")
+            return False
+
+        return True
+
+    def _is_prometheus_source_available(self):
+        """Return True if the Prometheus source is available, else False."""
+        try:
+            self._get_prometheus_source_url()
+            return True
+        except GrafanaSourceError:
+            return False
+
     # Properties
 
     @property
@@ -119,10 +195,18 @@ class KialiCharm(ops.CharmBase):
             self._parsed_config = CharmConfig(**config)  # pyright: ignore
         return self._parsed_config.dict(by_alias=True)
 
+    # TODO: Required by the GrafanaSourceConsumer library, but not used in this charm.  Can we remove it?
+    @property
+    def peers(self):
+        """Fetch the peer relation."""
+        return self.model.get_relation(PEER)
+
+
     # Helpers
 
+
 def _is_container_file_equal_to(container, filename, file_contents: str) -> bool:
-    """Returns True if the passed file_contents matches the filename inside the container, else False.
+    """Return True if the passed file_contents matches the filename inside the container, else False.
 
     Returns False if the container is not accessible, the file does not exist, or the contents do not match.
     """
@@ -136,6 +220,11 @@ def _is_container_file_equal_to(container, filename, file_contents: str) -> bool
         return False
 
     return current_contents == file_contents
+
+
+class GrafanaSourceError(Exception):
+    """Raised when the Grafana source data is not available."""
+    pass
 
 
 if __name__ == "__main__":

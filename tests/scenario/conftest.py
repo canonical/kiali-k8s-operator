@@ -7,11 +7,11 @@ from scenario import Context
 from src.charm import KialiCharm as ThisCharm
 
 
-@pytest.fixture()
+@pytest.fixture(scope="function")
 def this_charm():
     yield ThisCharm
 
 
-@pytest.fixture()
+@pytest.fixture(scope="function")
 def this_charm_context(this_charm):
     yield Context(charm_type=this_charm)

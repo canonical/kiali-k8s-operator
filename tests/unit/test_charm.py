@@ -4,7 +4,6 @@
 import ops
 import ops.testing
 import pytest
-from ops.model import ActiveStatus
 
 from charm import KialiCharm
 
