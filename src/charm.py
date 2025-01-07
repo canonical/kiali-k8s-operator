@@ -12,8 +12,9 @@ from typing import List
 import ops
 import yaml
 from charms.grafana_k8s.v0.grafana_source import GrafanaSourceConsumer
-from ops import StatusBase, pebble
+from ops import Port, StatusBase, pebble
 from ops.pebble import Layer
+import requests
 
 from config import CharmConfig
 
@@ -22,6 +23,7 @@ SOURCE_PATH = Path(__file__).parent
 
 
 KIALI_CONFIG_PATH = Path("/kiali-configuration/config.yaml")
+KIALI_PORT = 20001
 
 # TODO: Required by the GrafanaSourceConsumer library, but barely used in this charm.  Can we remove it?
 PEER = "grafana"
@@ -50,6 +52,9 @@ class KialiCharm(ops.CharmBase):
 
         self.framework.observe(self.on.collect_unit_status, self.on_collect_status)
         self.framework.observe(self.on.config_changed, self._reconcile)
+
+        # Expose the Kiali workload through the service
+        self.unit.set_ports(Port("tcp", KIALI_PORT))
 
     def on_collect_status(self, e: ops.CollectStatusEvent):
         """Collect and report the statuses of the charm."""
@@ -121,9 +126,7 @@ class KialiCharm(ops.CharmBase):
             },
             # TODO: Use the actual istio namespace
             "istio_namespace": "istio-system",
-            "server": {
-                "web_root": "/kiali"
-            }
+            "server": {"port": KIALI_PORT, "web_root": "/kiali"},
         }
         return yaml.dump(config)
 
@@ -161,18 +164,21 @@ class KialiCharm(ops.CharmBase):
 
     def _is_kiali_available(self):
         """Return True if the Kiali workload is available, else False.
-
-        TODO: This is a placeholder implementation.  It confirms that we've written a Kiali configuration file, which is
-         a proxy for having successfully built the configuration and planned a layer.  It does not confirm that the
-         service is actually running and available.  This should be improved.
         """
         if not self._container.can_connect():
+            LOGGER.info(f"Cannot connect to container: {e} - Kiali is not available")
             return False
 
         try:
             self._container.pull(KIALI_CONFIG_PATH)
         except pebble.PathError as e:
             LOGGER.info(f"Could not find Kiali configuration file: {e} - Kiali is not available")
+            return False
+
+        kiali_config = self._generate_kiali_config()
+        kiali_local_url = f"http://localhost:{kiali_config["server"]["port"]}/kiali"
+        if requests.get(url=kiali_local_url).status_code != 200:
+            LOGGER.info(f"Kiali is not available at {kiali_local_url}")
             return False
 
         return True

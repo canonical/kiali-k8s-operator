@@ -1,3 +1,4 @@
 ops
 pydantic
 cosl
+requests
