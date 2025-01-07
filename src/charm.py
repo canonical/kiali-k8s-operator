@@ -95,7 +95,7 @@ class KialiCharm(ops.CharmBase):
 
         layer = self._generate_kiali_layer()
         try:
-            new_config = self._generate_kiali_config()
+            new_config = yaml.dump(self._generate_kiali_config())
         except GrafanaSourceError as e:
             LOGGER.warning(f"Failed to generate {name} configuration, got error: {e}")
             # TODO: actually shut down the service and remove the configuration
@@ -112,23 +112,19 @@ class KialiCharm(ops.CharmBase):
             LOGGER.info(f"new config detected for {name}, restarting the service")
             self._container.replan()
 
-    def _generate_kiali_config(self) -> str:
+    def _generate_kiali_config(self) -> dict:
         """Generate the Kiali configuration."""
         prometheus_url = self._get_prometheus_source_url()
         config = {
             "auth": {
                 "strategy": "anonymous",
             },
-            "external_services": {
-                "prometheus": {
-                    "url": prometheus_url
-                }
-            },
+            "external_services": {"prometheus": {"url": prometheus_url}},
             # TODO: Use the actual istio namespace
             "istio_namespace": "istio-system",
             "server": {"port": KIALI_PORT, "web_root": "/kiali"},
         }
-        return yaml.dump(config)
+        return config
 
     @staticmethod
     def _generate_kiali_layer() -> Layer:
@@ -176,7 +172,7 @@ class KialiCharm(ops.CharmBase):
             return False
 
         kiali_config = self._generate_kiali_config()
-        kiali_local_url = f"http://localhost:{kiali_config["server"]["port"]}/kiali"
+        kiali_local_url = f"http://localhost:{kiali_config['server']['port']}/kiali"
         if requests.get(url=kiali_local_url).status_code != 200:
             LOGGER.info(f"Kiali is not available at {kiali_local_url}")
             return False
