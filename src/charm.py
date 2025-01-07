@@ -42,16 +42,16 @@ class KialiCharm(ops.CharmBase):
         self._prometheus_source = GrafanaSourceConsumer(self, "prometheus")
         self.framework.observe(
             self._prometheus_source.on.sources_changed,  # pyright: ignore
-            self._reconcile,
+            self.reconcile,
         )
         # Not sure we need this, but kept it here for completeness.
         self.framework.observe(
             self._prometheus_source.on.sources_to_delete_changed,  # pyright: ignore
-            self._reconcile,
+            self.reconcile,
         )
 
         self.framework.observe(self.on.collect_unit_status, self.on_collect_status)
-        self.framework.observe(self.on.config_changed, self._reconcile)
+        self.framework.observe(self.on.config_changed, self.reconcile)
 
         # Expose the Kiali workload through the service
         self.unit.set_ports(Port("tcp", KIALI_PORT))
@@ -69,7 +69,11 @@ class KialiCharm(ops.CharmBase):
             statuses.append(ops.BlockedStatus("Prometheus source is not available"))
 
         if not self._is_kiali_available():
-            statuses.append(ops.WaitingStatus("Kiali is configured and container is ready, but Kiali is not available"))
+            statuses.append(
+                ops.WaitingStatus(
+                    "Kiali is configured and container is ready, but Kiali is not available"
+                )
+            )
 
         if len(statuses) == 0:
             statuses.append(ops.ActiveStatus())
@@ -77,17 +81,19 @@ class KialiCharm(ops.CharmBase):
         for status in statuses:
             e.add_status(status)
 
-    def _reconcile(self, _event: ops.ConfigChangedEvent):
+    def reconcile(self, _event: ops.ConfigChangedEvent):
         """Reconcile the entire state of the charm."""
         self._configure_kiali_workload()
 
     def _configure_kiali_workload(self):
         """Configure the Kiali workload, if possible, logging errors otherwise.
 
-        This will generate and push the Kiali configuration to the container, restarting the service if necessary.  If
-        any known errors occur, they will be logged and this method will return without error.
+        This will generate and push the Kiali configuration to the container, restarting the service if necessary.
+        The purpose here is that this should always attempt to configure/start Kiali, but it does not guarantee Kiali is
+        running after completion.  If any known errors occur, they will be logged and this method will return without
+        error.  To confirm if Kiali is working, check the status of the Kiali workload directly.
         """
-        # TODO: Can I make this generic and share with other charms?
+        # TODO: Can we make this generic and share with other charms?
         name = "kiali"
         if not self._container.can_connect():
             LOGGER.warning(f"Container is not ready, cannot configure {name}")
@@ -102,8 +108,9 @@ class KialiCharm(ops.CharmBase):
             # LOGGER.warning(f"Shutting down {name} service and removing existing configuration")
             return
 
-        # TODO: Ensure this works as expected
-        should_restart = not _is_container_file_equal_to(self._container, KIALI_CONFIG_PATH, new_config)
+        should_restart = not _is_container_file_equal_to(
+            self._container, KIALI_CONFIG_PATH, new_config
+        )
         self._container.push(KIALI_CONFIG_PATH, new_config, make_dirs=True)
         self._container.add_layer(name, layer, combine=True)
         self._container.autostart()
@@ -141,7 +148,7 @@ class KialiCharm(ops.CharmBase):
                         "command": f"/opt/kiali/kiali -config {KIALI_CONFIG_PATH}",
                         "startup": "enabled",
                     }
-                }
+                },
             }
         )
 
@@ -154,7 +161,7 @@ class KialiCharm(ops.CharmBase):
             raise GrafanaSourceError("No Prometheus sources available")
         if len(prometheus_sources) > 1:
             raise GrafanaSourceError("Multiple Prometheus sources available, expected only one")
-        if not (url := prometheus_sources[0].get('url', None)):
+        if not (url := prometheus_sources[0].get("url", None)):
             raise GrafanaSourceError("Prometheus source data is incomplete - url not available")
         return url
 
@@ -203,7 +210,6 @@ class KialiCharm(ops.CharmBase):
         """Fetch the peer relation."""
         return self.model.get_relation(PEER)
 
-
     # Helpers
 
 
@@ -226,6 +232,7 @@ def _is_container_file_equal_to(container, filename, file_contents: str) -> bool
 
 class GrafanaSourceError(Exception):
     """Raised when the Grafana source data is not available."""
+
     pass
 
 
