@@ -150,6 +150,7 @@ class KialiCharm(ops.CharmBase):
                         "summary": "kiali",
                         "command": f"/opt/kiali/kiali -config {KIALI_CONFIG_PATH}",
                         "startup": "enabled",
+                        "working-dir": "/opt/kiali",
                     }
                 },
             }
