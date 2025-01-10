@@ -214,6 +214,8 @@ def _is_container_file_equal_to(container: Container, filename: str, file_conten
 
 def _is_kiali_available(kiali_url):
     """Return True if the Kiali workload is available, else False."""
+    # TODO: This feels like a pebble check.  We should move this to a pebble check, then just confirm pebble checks are
+    #  passing
     if requests.get(url=kiali_url).status_code != 200:
         LOGGER.info(f"Kiali is not available at {kiali_url}")
         return False
