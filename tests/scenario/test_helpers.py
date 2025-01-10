@@ -14,8 +14,8 @@ from charm import _is_container_file_equal_to, _is_kiali_available
 CONTAINER_NAME = "container"
 
 
-class DummyCharm(CharmBase):
-    META = {"name": "dummy", "containers": {CONTAINER_NAME: {}}}
+class SampleCharm(CharmBase):
+    META = {"name": "sample", "containers": {CONTAINER_NAME: {}}}
 
     def __init__(self, framework):
         super().__init__(framework)
@@ -25,18 +25,18 @@ class DummyCharm(CharmBase):
 def test_is_container_file_equal_to(tmp_path):
     """Tests that _is_container_file_equal_to correctly can check if a container's file equals given data."""
     # Arrange a scenario context with a container that has a file mount
-    ctx = Context(charm_type=DummyCharm, meta=DummyCharm.META)
+    ctx = Context(charm_type=SampleCharm, meta=SampleCharm.META)
     container_storage = tmp_path / "container"
-    filename = "/dummy/test.txt"
+    filename = "/sample/test.txt"
 
     scenario_container = Container(
         name=CONTAINER_NAME,
         can_connect=True,
-        mounts={"dummy": Mount(location=filename, source=container_storage)},
+        mounts={"sample": Mount(location=filename, source=container_storage)},
     )
 
     # Act/Assert
-    # Execute this in a dummy charm so scenario can populate an ops-style container for us
+    # Execute this in a sample charm so scenario can populate an ops-style container for us
     with ctx(ctx.on.update_status(), State(containers=[scenario_container])) as manager:
         charm = manager.charm
         model_container = charm.container
