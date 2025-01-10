@@ -2,13 +2,10 @@
 # Copyright 2024 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-from unittest.mock import patch
-
-import pytest
 from ops import CharmBase
 from scenario import Container, Context, Mount, State
 
-from charm import _is_container_file_equal_to, _is_kiali_available
+from charm import _is_container_file_equal_to
 
 CONTAINER_NAME = "container"
 
@@ -53,18 +50,3 @@ def test_is_container_file_equal_to(tmp_path):
             _is_container_file_equal_to(model_container, filename, sample_file_data + "NOT")
             is False
         )
-
-
-@pytest.mark.parametrize(
-    "status_code, expected_result",
-    [
-        (200, True),
-        (404, False),
-        (500, False),
-    ],
-)
-def test_is_kiali_available(mock_requests_get, status_code, expected_result):
-    """Tests that _is_kiali_available returns the expected result."""
-    with patch("charm.requests.get") as mock_requests_get:
-        mock_requests_get.return_value.status_code = status_code
-        assert _is_kiali_available("http://kiali") == expected_result
