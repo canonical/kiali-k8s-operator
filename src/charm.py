@@ -169,8 +169,6 @@ class KialiCharm(ops.CharmBase):
             raise GrafanaSourceError("Prometheus source data is incomplete - url not available")
         return url
 
-        return True
-
     def _is_prometheus_source_available(self):
         """Return True if the Prometheus source is available, else False."""
         try:
