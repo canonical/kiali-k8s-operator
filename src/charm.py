@@ -217,8 +217,12 @@ def _is_kiali_available(kiali_url):
     """Return True if the Kiali workload is available, else False."""
     # TODO: This feels like a pebble check.  We should move this to a pebble check, then just confirm pebble checks are
     #  passing
-    if requests.get(url=kiali_url).status_code != 200:
-        LOGGER.info(f"Kiali is not available at {kiali_url}")
+    try:
+        if requests.get(url=kiali_url).status_code != 200:
+            LOGGER.info(f"Kiali is not available at {kiali_url}")
+            return False
+    except requests.exceptions.ConnectionError as e:
+        LOGGER.info(f"Kiali is not available at {kiali_url} - got error: {e}")
         return False
 
     return True
