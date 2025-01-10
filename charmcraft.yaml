@@ -8,8 +8,6 @@ summary: A Juju charm to operate Kiali
 description: |
   Kiali is a dashboard for Istio, providing visualization and control of your service mesh.
 
-#config:
-
 assumes:
   - k8s-api
 
@@ -43,8 +41,6 @@ peers:
   # TODO: Can we remove this?  Required for the grafana_datasource lib, but not for features we use.
   grafana:
     interface: grafana_peers
-
-#provides:
 
 requires:
   prometheus:

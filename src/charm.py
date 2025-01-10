@@ -24,6 +24,7 @@ SOURCE_PATH = Path(__file__).parent
 
 KIALI_CONFIG_PATH = Path("/kiali-configuration/config.yaml")
 KIALI_PORT = 20001
+KIALI_PEBBLE_SERVICE_NAME = "kiali"
 
 # TODO: Required by the GrafanaSourceConsumer library, but barely used in this charm.  Can we remove it?
 PEER = "grafana"
@@ -100,13 +101,13 @@ class KialiCharm(ops.CharmBase):
         # TODO: Can we make this generic and share with other charms?
         name = "kiali"
         if not self._container.can_connect():
-            LOGGER.warning(f"Container is not ready, cannot configure {name}")
+            LOGGER.debug(f"Container is not ready, cannot configure {name}")
             return
 
         layer = self._generate_kiali_layer()
         try:
             new_config = yaml.dump(self._generate_kiali_config())
-        except GrafanaSourceError as e:
+        except PrometheusSourceError as e:
             LOGGER.warning(f"Failed to generate {name} configuration, got error: {e}")
             # TODO: actually shut down the service and remove the configuration
             # LOGGER.warning(f"Shutting down {name} service and removing existing configuration")
@@ -121,7 +122,7 @@ class KialiCharm(ops.CharmBase):
 
         if should_restart:
             LOGGER.info(f"new config detected for {name}, restarting the service")
-            self._container.replan()
+            self._container.restart(KIALI_PEBBLE_SERVICE_NAME)
 
     def _generate_kiali_config(self) -> dict:
         """Generate the Kiali configuration."""
@@ -131,7 +132,7 @@ class KialiCharm(ops.CharmBase):
                 "strategy": "anonymous",
             },
             "external_services": {"prometheus": {"url": prometheus_url}},
-            # TODO: Use the actual istio namespace
+            # TODO: Use the actual istio namespace (https://github.com/canonical/kiali-k8s-operator/issues/4)
             "istio_namespace": "istio-system",
             "server": {"port": KIALI_PORT, "web_root": "/kiali"},
         }
@@ -145,7 +146,7 @@ class KialiCharm(ops.CharmBase):
                 "summary": "Kiali",
                 "description": "The Kiali dashboard for Istio",
                 "services": {
-                    "kiali": {
+                    KIALI_PEBBLE_SERVICE_NAME: {
                         "override": "replace",
                         "summary": "kiali",
                         "command": f"/opt/kiali/kiali -config {KIALI_CONFIG_PATH}",
@@ -162,11 +163,11 @@ class KialiCharm(ops.CharmBase):
         Raises a SourceNotAvailableError if there are no sources or the data is not complete.
         """
         if not (prometheus_sources := self._prometheus_source.sources):
-            raise GrafanaSourceError("No Prometheus sources available")
+            raise PrometheusSourceError("No Prometheus sources available")
         if len(prometheus_sources) > 1:
-            raise GrafanaSourceError("Multiple Prometheus sources available, expected only one")
+            raise PrometheusSourceError("Multiple Prometheus sources available, expected only one")
         if not (url := prometheus_sources[0].get("url", None)):
-            raise GrafanaSourceError("Prometheus source data is incomplete - url not available")
+            raise PrometheusSourceError("Prometheus source data is incomplete - url not available")
         return url
 
     def _is_prometheus_source_available(self):
@@ -174,7 +175,7 @@ class KialiCharm(ops.CharmBase):
         try:
             self._get_prometheus_source_url()
             return True
-        except GrafanaSourceError:
+        except PrometheusSourceError:
             return False
 
     # Properties
@@ -223,8 +224,8 @@ def _is_kiali_available(kiali_url):
     return True
 
 
-class GrafanaSourceError(Exception):
-    """Raised when the Grafana source data is not available."""
+class PrometheusSourceError(Exception):
+    """Raised when the Prometheus data is not available."""
 
     pass
 
