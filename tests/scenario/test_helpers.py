@@ -5,7 +5,6 @@
 from unittest.mock import patch
 
 import pytest
-
 from ops import CharmBase
 from scenario import Container, Context, Mount, State
 
