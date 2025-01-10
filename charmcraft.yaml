@@ -45,6 +45,14 @@ peers:
 requires:
   prometheus:
     interface: grafana_datasource
+  service-mesh:
+    interface: service_mesh
+  require-cmr-mesh:
+    interface: cross_model_mesh
+
+provides:
+  provide-cmr-mesh:
+    interface: cross_model_mesh
 
 parts:
   charm:

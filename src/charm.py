@@ -13,6 +13,7 @@ import ops
 import requests
 import yaml
 from charms.grafana_k8s.v0.grafana_source import GrafanaSourceConsumer
+from charms.istio_beacon_k8s.v0.service_mesh import ServiceMeshConsumer
 from ops import Container, Port, StatusBase, pebble
 from ops.pebble import Layer
 
@@ -50,6 +51,9 @@ class KialiCharm(ops.CharmBase):
             self._prometheus_source.on.sources_to_delete_changed,  # pyright: ignore
             self.reconcile,
         )
+
+        # Connection to the service mesh
+        self._mesh = ServiceMeshConsumer(self)
 
         self.framework.observe(self.on.collect_unit_status, self.on_collect_status)
         self.framework.observe(self.on.config_changed, self.reconcile)
