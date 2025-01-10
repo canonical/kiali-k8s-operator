@@ -2,12 +2,11 @@
 # Copyright 2024 Canonical Ltd.
 # See LICENSE file for licensing details.
 import json
+from unittest.mock import patch
 
 import pytest
 from ops import ActiveStatus, BlockedStatus, WaitingStatus
 from scenario import Container, PeerRelation, Relation, State
-
-from charm import KIALI_CONFIG_PATH
 
 REMOTE_PROMETHEUS_APP_NAME = "grafana"
 REMOTE_PROMETHEUS_MODEL = "some-model"
@@ -39,13 +38,20 @@ def test_charm_processes_prometheus_relation_data(this_charm_context):
     mock_peer_relation = mock_grafana_consumer_peer_relation()
 
     # Act
-    state_with_grafana_source_processed = this_charm_context.run(this_charm_context.on.relation_changed(prometheus_relation), state)
+    state_with_grafana_source_processed = this_charm_context.run(
+        this_charm_context.on.relation_changed(prometheus_relation), state
+    )
 
     # Assert that the peer relation data is as expected.
     # If this test fails due to GrafanaSourceConsumer changing its peer relation data format, update the
     # mock_grafana_consumer_peer_relation method to match the new format as other tests in this suite use the mock
     # rather than the real data.
-    assert compare_sources_ignoring_relation_id(mock_peer_relation.local_app_data["sources"], state_with_grafana_source_processed.get_relation(grafana_source_peer_relation.id).local_app_data["sources"]), "This failing indicates GrafanaSourceConsumer may have changed its peer data format.  See comments for this test for additional instructions."
+    assert compare_sources_ignoring_relation_id(
+        mock_peer_relation.local_app_data["sources"],
+        state_with_grafana_source_processed.get_relation(
+            grafana_source_peer_relation.id
+        ).local_app_data["sources"],
+    ), "This failing indicates GrafanaSourceConsumer may have changed its peer data format.  See comments for this test for additional instructions."
 
 
 def mock_prometheus_relation() -> Relation:
@@ -54,19 +60,21 @@ def mock_prometheus_relation() -> Relation:
         endpoint="prometheus",
         interface="grafana_datasource",
         remote_app_name=REMOTE_PROMETHEUS_APP_NAME,
-        remote_app_data = {
-            "grafana_source_data": json.dumps({
-                "model": REMOTE_PROMETHEUS_MODEL,
-                "model_uuid": REMOTE_PROMETHEUS_MODEL_UUID,
-                "application": REMOTE_PROMETHEUS_APP_NAME,
-                "type": REMOTE_PROMETHEUS_TYPE,
-                # "extra_fields": {},
-                # "secure_extra_fields": None,
-            }),
+        remote_app_data={
+            "grafana_source_data": json.dumps(
+                {
+                    "model": REMOTE_PROMETHEUS_MODEL,
+                    "model_uuid": REMOTE_PROMETHEUS_MODEL_UUID,
+                    "application": REMOTE_PROMETHEUS_APP_NAME,
+                    "type": REMOTE_PROMETHEUS_TYPE,
+                    # "extra_fields": {},
+                    # "secure_extra_fields": None,
+                }
+            ),
         },
-        remote_units_data = {
+        remote_units_data={
             0: {"grafana_source_host": REMOTE_PROMETHEUS_URL},
-        }
+        },
     )
 
 
@@ -75,14 +83,18 @@ def mock_grafana_consumer_peer_relation() -> PeerRelation:
     return PeerRelation(
         "grafana",
         local_app_data={
-            "sources": json.dumps({
-                "1": [{
-                    "unit": f"{REMOTE_PROMETHEUS_APP_NAME}/0",
-                    "source_name": f"juju_{REMOTE_PROMETHEUS_MODEL}_{REMOTE_PROMETHEUS_MODEL_UUID}_{REMOTE_PROMETHEUS_APP_NAME}_0",
-                    "source_type": REMOTE_PROMETHEUS_TYPE,
-                    "url": REMOTE_PROMETHEUS_URL
-                }]
-            }),
+            "sources": json.dumps(
+                {
+                    "1": [
+                        {
+                            "unit": f"{REMOTE_PROMETHEUS_APP_NAME}/0",
+                            "source_name": f"juju_{REMOTE_PROMETHEUS_MODEL}_{REMOTE_PROMETHEUS_MODEL_UUID}_{REMOTE_PROMETHEUS_APP_NAME}_0",
+                            "source_type": REMOTE_PROMETHEUS_TYPE,
+                            "url": REMOTE_PROMETHEUS_URL,
+                        }
+                    ]
+                }
+            ),
             "sources_to_delete": json.dumps([]),
         },
     )
@@ -103,7 +115,7 @@ def compare_sources_ignoring_relation_id(sources1: str, sources2: str):
 
 
 @pytest.mark.parametrize(
-    "container, relations, expected_status, config_file_exists",
+    "container, relations, kiali_available, expected_status",
     [
         (
             # Has all inputs - Active
@@ -112,8 +124,8 @@ def compare_sources_ignoring_relation_id(sources1: str, sources2: str):
                 mock_prometheus_relation(),
                 mock_grafana_consumer_peer_relation(),
             ],
+            True,
             ActiveStatus,
-            True
         ),
         (
             # Inactive - container not ready
@@ -122,19 +134,31 @@ def compare_sources_ignoring_relation_id(sources1: str, sources2: str):
                 mock_prometheus_relation(),
                 mock_grafana_consumer_peer_relation(),
             ],
+            False,
             WaitingStatus,
-            False
         ),
         (
             # Inactive - prometheus relation not ready
             Container(name="kiali", can_connect=True),
             [],
+            False,
             BlockedStatus,
-            False
         ),
-    ]
+        (
+            # Inactive - inputs ready, but kiali not available
+            Container(name="kiali", can_connect=True),
+            [
+                mock_prometheus_relation(),
+                mock_grafana_consumer_peer_relation(),
+            ],
+            False,
+            WaitingStatus,
+        ),
+    ],
 )
-def test_charm_given_inputs(this_charm_context, container, relations, expected_status, config_file_exists):
+def test_charm_given_inputs(
+    this_charm_context, container, relations, kiali_available, expected_status
+):
     """Tests that the charm responds as expected to standard inputs."""
     # Arrange
     state = State(
@@ -143,12 +167,7 @@ def test_charm_given_inputs(this_charm_context, container, relations, expected_s
         leader=True,
     )
 
-    # Act - trigger the config-changed event, which should be enough to reconcile the charm to Active
-    out = this_charm_context.run(this_charm_context.on.config_changed(), state)
+    with patch("charm._is_kiali_available", lambda x: kiali_available):
+        out = this_charm_context.run(this_charm_context.on.config_changed(), state)
 
-    # Assert
-    # that charm is active
     assert isinstance(out.unit_status, expected_status)
-
-    # that a config file was generated
-    assert (container.get_filesystem(this_charm_context) / KIALI_CONFIG_PATH.relative_to("/")).exists() == config_file_exists

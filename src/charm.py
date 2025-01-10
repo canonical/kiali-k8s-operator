@@ -10,11 +10,11 @@ from pathlib import Path
 from typing import List
 
 import ops
+import requests
 import yaml
 from charms.grafana_k8s.v0.grafana_source import GrafanaSourceConsumer
-from ops import Port, StatusBase, pebble
+from ops import Container, Port, StatusBase, pebble
 from ops.pebble import Layer
-import requests
 
 from config import CharmConfig
 
@@ -65,15 +65,19 @@ class KialiCharm(ops.CharmBase):
         if not self._container.can_connect():
             statuses.append(ops.WaitingStatus("Waiting for the Kiali container to be ready"))
 
-        if not self._is_prometheus_source_available():
+        if not (prometheus_source_available := self._is_prometheus_source_available()):
             statuses.append(ops.BlockedStatus("Prometheus source is not available"))
 
-        if not self._is_kiali_available():
-            statuses.append(
-                ops.WaitingStatus(
-                    "Kiali is configured and container is ready, but Kiali is not available"
+        if prometheus_source_available:
+            # Only valid if we have a prometheus source
+            kiali_config = self._generate_kiali_config()
+            kiali_local_url = f"http://localhost:{kiali_config['server']['port']}/kiali"
+            if not _is_kiali_available(kiali_local_url):
+                statuses.append(
+                    ops.WaitingStatus(
+                        "Kiali is configured and container is ready, but Kiali is not available"
+                    )
                 )
-            )
 
         if len(statuses) == 0:
             statuses.append(ops.ActiveStatus())
@@ -109,7 +113,7 @@ class KialiCharm(ops.CharmBase):
             return
 
         should_restart = not _is_container_file_equal_to(
-            self._container, KIALI_CONFIG_PATH, new_config
+            self._container, str(KIALI_CONFIG_PATH), new_config
         )
         self._container.push(KIALI_CONFIG_PATH, new_config, make_dirs=True)
         self._container.add_layer(name, layer, combine=True)
@@ -122,7 +126,7 @@ class KialiCharm(ops.CharmBase):
     def _generate_kiali_config(self) -> dict:
         """Generate the Kiali configuration."""
         prometheus_url = self._get_prometheus_source_url()
-        config = {
+        return {
             "auth": {
                 "strategy": "anonymous",
             },
@@ -131,7 +135,6 @@ class KialiCharm(ops.CharmBase):
             "istio_namespace": "istio-system",
             "server": {"port": KIALI_PORT, "web_root": "/kiali"},
         }
-        return config
 
     @staticmethod
     def _generate_kiali_layer() -> Layer:
@@ -165,25 +168,6 @@ class KialiCharm(ops.CharmBase):
             raise GrafanaSourceError("Prometheus source data is incomplete - url not available")
         return url
 
-    def _is_kiali_available(self):
-        """Return True if the Kiali workload is available, else False.
-        """
-        if not self._container.can_connect():
-            LOGGER.info(f"Cannot connect to container: {e} - Kiali is not available")
-            return False
-
-        try:
-            self._container.pull(KIALI_CONFIG_PATH)
-        except pebble.PathError as e:
-            LOGGER.info(f"Could not find Kiali configuration file: {e} - Kiali is not available")
-            return False
-
-        kiali_config = self._generate_kiali_config()
-        kiali_local_url = f"http://localhost:{kiali_config['server']['port']}/kiali"
-        if requests.get(url=kiali_local_url).status_code != 200:
-            LOGGER.info(f"Kiali is not available at {kiali_local_url}")
-            return False
-
         return True
 
     def _is_prometheus_source_available(self):
@@ -210,10 +194,9 @@ class KialiCharm(ops.CharmBase):
         """Fetch the peer relation."""
         return self.model.get_relation(PEER)
 
-    # Helpers
 
-
-def _is_container_file_equal_to(container, filename, file_contents: str) -> bool:
+# Helpers
+def _is_container_file_equal_to(container: Container, filename: str, file_contents: str) -> bool:
     """Return True if the passed file_contents matches the filename inside the container, else False.
 
     Returns False if the container is not accessible, the file does not exist, or the contents do not match.
@@ -228,6 +211,15 @@ def _is_container_file_equal_to(container, filename, file_contents: str) -> bool
         return False
 
     return current_contents == file_contents
+
+
+def _is_kiali_available(kiali_url):
+    """Return True if the Kiali workload is available, else False."""
+    if requests.get(url=kiali_url).status_code != 200:
+        LOGGER.info(f"Kiali is not available at {kiali_url}")
+        return False
+
+    return True
 
 
 class GrafanaSourceError(Exception):
