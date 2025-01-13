@@ -8,8 +8,6 @@ summary: A Juju charm to operate Kiali
 description: |
   Kiali is a dashboard for Istio, providing visualization and control of your service mesh.
 
-config:
-
 assumes:
   - k8s-api
 
@@ -31,13 +29,22 @@ bases:
       channel: "22.04"
       architectures: ["arm64"]
 
+charm-libs:
+  - lib: "grafana_k8s.grafana_source"
+    version: "0"
+
 containers:
   kiali:
     resource: kiali-image
 
-provides:
+peers:
+  # TODO: Can we remove this?  Required for the grafana_datasource lib, but not for features we use.
+  grafana:
+    interface: grafana_peers
 
 requires:
+  prometheus:
+    interface: grafana_datasource
 
 parts:
   charm:

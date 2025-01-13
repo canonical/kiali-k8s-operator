@@ -4,19 +4,6 @@
 from unittest.mock import patch
 
 import pytest
-from scenario import Context
-
-from charm import KialiCharm as ThisCharm
-
-
-@pytest.fixture(scope="function")
-def this_charm():
-    yield ThisCharm
-
-
-@pytest.fixture(scope="function")
-def this_charm_context(this_charm):
-    yield Context(charm_type=this_charm)
 
 
 @pytest.fixture(autouse=True)
