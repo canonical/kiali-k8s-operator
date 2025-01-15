@@ -97,6 +97,6 @@ async def test_kiali_is_available(ops_test: OpsTest):
 async def test_remove_relation_prometheus(ops_test: OpsTest):
     """Assert charm is blocked when we remove the prometheus relation."""
     await ops_test.model.applications[PROMETHEUS_K8S.application_name].remove_relation(
-        f"{APP_NAME}:prometheus", PROMETHEUS_K8S.application_name
+        f"{APP_NAME}:grafana-source", PROMETHEUS_K8S.application_name
     )
     await ops_test.model.wait_for_idle(apps=[APP_NAME], status="blocked", timeout=1000)

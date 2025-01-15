@@ -188,7 +188,6 @@ class KialiCharm(ops.CharmBase):
         Returns:
             str: The URL of the specified source type.
         """
-
         filtered_sources = [
             source for source in self._sources.sources if source.get("source_type") == source_type
         ]
