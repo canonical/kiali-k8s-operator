@@ -43,7 +43,7 @@ peers:
     interface: grafana_peers
 
 requires:
-  prometheus:
+  grafana-source:
     interface: grafana_datasource
   service-mesh:
     interface: service_mesh

@@ -18,6 +18,14 @@ from ops import Container, Port, StatusBase, pebble
 from ops.pebble import Layer
 
 from config import CharmConfig
+from workload_config import (
+    AuthConfig,
+    ExternalServicesConfig,
+    KialiConfigSpec,
+    PrometheusConfig,
+    ServerConfig,
+    TracingConfig,
+)
 
 LOGGER = logging.getLogger(__name__)
 SOURCE_PATH = Path(__file__).parent
@@ -41,14 +49,15 @@ class KialiCharm(ops.CharmBase):
         self._container = self.unit.get_container("kiali")
 
         # Connection to prometheus/grafana-source integration
-        self._prometheus_source = GrafanaSourceConsumer(self, "prometheus")
+        self._sources = GrafanaSourceConsumer(self, "grafana-source")
+
         self.framework.observe(
-            self._prometheus_source.on.sources_changed,  # pyright: ignore
+            self._sources.on.sources_changed,  # pyright: ignore
             self.reconcile,
         )
         # Not sure we need this, but kept it here for completeness.
         self.framework.observe(
-            self._prometheus_source.on.sources_to_delete_changed,  # pyright: ignore
+            self._sources.on.sources_to_delete_changed,  # pyright: ignore
             self.reconcile,
         )
 
@@ -70,7 +79,7 @@ class KialiCharm(ops.CharmBase):
         if not self._container.can_connect():
             statuses.append(ops.WaitingStatus("Waiting for the Kiali container to be ready"))
 
-        if not (prometheus_source_available := self._is_prometheus_source_available()):
+        if not (prometheus_source_available := self._is_source_available("prometheus")):
             statuses.append(ops.BlockedStatus("Prometheus source is not available"))
 
         if prometheus_source_available:
@@ -111,7 +120,7 @@ class KialiCharm(ops.CharmBase):
         layer = self._generate_kiali_layer()
         try:
             new_config = yaml.dump(self._generate_kiali_config())
-        except PrometheusSourceError as e:
+        except SourceError as e:
             LOGGER.warning(f"Failed to generate {name} configuration, got error: {e}")
             # TODO: actually shut down the service and remove the configuration
             # LOGGER.warning(f"Shutting down {name} service and removing existing configuration")
@@ -130,16 +139,82 @@ class KialiCharm(ops.CharmBase):
 
     def _generate_kiali_config(self) -> dict:
         """Generate the Kiali configuration."""
-        prometheus_url = self._get_prometheus_source_url()
-        return {
-            "auth": {
-                "strategy": "anonymous",
-            },
-            "external_services": {"prometheus": {"url": prometheus_url}},
-            # TODO: Use the actual istio namespace (https://github.com/canonical/kiali-k8s-operator/issues/4)
-            "istio_namespace": "istio-system",
-            "server": {"port": KIALI_PORT, "web_root": "/kiali"},
-        }
+        prometheus_url = self._get_source_url("prometheus")
+        tempo_url = self._get_source_url("tempo") if self._is_source_available("tempo") else None
+
+        external_services = ExternalServicesConfig(prometheus=PrometheusConfig(url=prometheus_url))
+
+        if tempo_url:
+            external_services.tracing = TracingConfig(
+                enabled=True,
+                internal_url=tempo_url,
+                use_grpc=True,
+                external_url=tempo_url,
+                grpc_port=9096,
+                # TODO: work on below functionality when we figure out how to get tempo's grafana source uid
+                # tempo_config=TracingTempoConfig(
+                #     org_id="1",
+                #     datasource_uid=self._get_tempo_source_uid(),
+                #     url_format="grafana",
+                # ),
+            )
+
+        # TODO: Grafna is a GrafanaSourceConsumer not a provider, how do we get Grafana URL?, Traefik maybe??
+        # It also doesn't make sense to ask grafana to provide its grafana-source
+        # grafana_url = self._get_source_url("grafana")
+        # if grafana_url:
+        # external_services.grafana = GrafanaConfig(
+        #     enabled=True,
+        #     external_url=grafana_url,
+        # )
+
+        kiali_config = KialiConfigSpec(
+            auth=AuthConfig(strategy="anonymous"),
+            external_services=external_services,
+            istio_namespace="istio-system",
+            server=ServerConfig(port=KIALI_PORT, web_root="/kiali"),
+        )
+        return kiali_config.model_dump(exclude_none=True)
+
+    def _get_source_url(self, source_type: str) -> str:
+        """Get the URL for a specific source type.
+
+        Args:
+            source_type (str): The type of the source (e.g., 'prometheus', 'tempo', 'grafana').
+
+        Raises:
+            SourceError: If no sources are available, multiple sources of the same type exist, or data is incomplete.
+
+        Returns:
+            str: The URL of the specified source type.
+        """
+
+        filtered_sources = [
+            source for source in self._sources.sources if source.get("source_type") == source_type
+        ]
+
+        if not filtered_sources:
+            raise SourceError(f"No sources available for type '{source_type}'")
+
+        if len(filtered_sources) > 1:
+            raise SourceError(
+                f"Multiple sources available for type '{source_type}', expected only one"
+            )
+
+        if not (url := filtered_sources[0].get("url")):
+            raise SourceError(
+                f"Source data for type '{source_type}' is incomplete - URL not available"
+            )
+
+        return url
+
+    def _is_source_available(self, source_type: str):
+        """Return True if the Prometheus source is available, else False."""
+        try:
+            self._get_source_url(source_type)
+            return True
+        except SourceError:
+            return False
 
     @staticmethod
     def _generate_kiali_layer() -> Layer:
@@ -161,27 +236,6 @@ class KialiCharm(ops.CharmBase):
             }
         )
 
-    def _get_prometheus_source_url(self):
-        """Get the Prometheus source configuration.
-
-        Raises a SourceNotAvailableError if there are no sources or the data is not complete.
-        """
-        if not (prometheus_sources := self._prometheus_source.sources):
-            raise PrometheusSourceError("No Prometheus sources available")
-        if len(prometheus_sources) > 1:
-            raise PrometheusSourceError("Multiple Prometheus sources available, expected only one")
-        if not (url := prometheus_sources[0].get("url", None)):
-            raise PrometheusSourceError("Prometheus source data is incomplete - url not available")
-        return url
-
-    def _is_prometheus_source_available(self):
-        """Return True if the Prometheus source is available, else False."""
-        try:
-            self._get_prometheus_source_url()
-            return True
-        except PrometheusSourceError:
-            return False
-
     # Properties
 
     @property
@@ -190,7 +244,7 @@ class KialiCharm(ops.CharmBase):
         if self._parsed_config is None:
             config = dict(self.model.config.items())
             self._parsed_config = CharmConfig(**config)  # pyright: ignore
-        return self._parsed_config.dict(by_alias=True)
+        return self._parsed_config.model_dump(by_alias=True)
 
     # TODO: Required by the GrafanaSourceConsumer library, but not used in this charm.  Can we remove it?
     @property
@@ -232,8 +286,8 @@ def _is_kiali_available(kiali_url):
     return True
 
 
-class PrometheusSourceError(Exception):
-    """Raised when the Prometheus data is not available."""
+class SourceError(Exception):
+    """Raised when a datasource data is not available."""
 
     pass
 
