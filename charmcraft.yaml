@@ -49,11 +49,18 @@ requires:
     interface: service_mesh
   require-cmr-mesh:
     interface: cross_model_mesh
+  logging:
+    interface: loki_push_api
+    description: |
+      Receives Loki's push api endpoint address to push logs to, and forwards charm's built-in alert rules to Loki.
 
 provides:
   provide-cmr-mesh:
     interface: cross_model_mesh
-
+  metrics-endpoint:
+    interface: prometheus_scrape
+    description: |
+      Exposes the Prometheus metrics endpoint providing telemetry about the Kiali instance
 parts:
   charm:
     plugin: charm
