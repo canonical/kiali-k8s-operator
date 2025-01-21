@@ -14,6 +14,8 @@ import requests
 import yaml
 from charms.grafana_k8s.v0.grafana_source import GrafanaSourceConsumer
 from charms.istio_beacon_k8s.v0.service_mesh import ServiceMeshConsumer
+from charms.loki_k8s.v1.loki_push_api import LogForwarder
+from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
 from ops import Container, Port, StatusBase, pebble
 from ops.pebble import Layer
 
@@ -39,6 +41,13 @@ class KialiCharm(ops.CharmBase):
         self._parsed_config = None
 
         self._container = self.unit.get_container("kiali")
+
+        # O11y Integration
+        self._scraping = MetricsEndpointProvider(
+            self,
+            jobs=[{"static_configs": [{"targets": ["*:9090"]}]}],
+        )
+        self._logging = LogForwarder(self)
 
         # Connection to prometheus/grafana-source integration
         self._prometheus_source = GrafanaSourceConsumer(self, "prometheus")
