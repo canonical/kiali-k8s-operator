@@ -6,6 +6,7 @@
 """A Juju charm for managing Kiali."""
 
 import logging
+import socket
 from pathlib import Path
 from typing import List
 
@@ -16,6 +17,7 @@ from charms.grafana_k8s.v0.grafana_source import GrafanaSourceConsumer
 from charms.istio_beacon_k8s.v0.service_mesh import ServiceMeshConsumer
 from charms.loki_k8s.v1.loki_push_api import LogForwarder
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
+from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
 from ops import Container, Port, StatusBase, pebble
 from ops.pebble import Layer
 
@@ -48,6 +50,18 @@ class KialiCharm(ops.CharmBase):
             jobs=[{"static_configs": [{"targets": ["*:9090"]}]}],
         )
         self._logging = LogForwarder(self)
+
+        # Ingress Integration
+        self._ingress = IngressPerAppRequirer(
+            charm=self,
+            port=KIALI_PORT,
+            strip_prefix=False,
+            redirect_https=True,
+            scheme=self._scheme,
+        )
+        self._prefix = f"/{self.model.name}-{self.app.name}"
+        self.framework.observe(self._ingress.on.ready, self.reconcile)
+        self.framework.observe(self._ingress.on.revoked, self.reconcile)
 
         # Connection to prometheus/grafana-source integration
         self._prometheus_source = GrafanaSourceConsumer(self, "prometheus")
@@ -83,13 +97,12 @@ class KialiCharm(ops.CharmBase):
             statuses.append(ops.BlockedStatus("Prometheus source is not available"))
 
         if prometheus_source_available:
+
             # Only valid if we have a prometheus source
-            kiali_config = self._generate_kiali_config()
-            kiali_local_url = f"http://localhost:{kiali_config['server']['port']}/kiali"
-            if not _is_kiali_available(kiali_local_url):
+            if not _is_kiali_available(self._external_url + self._prefix):
                 statuses.append(
                     ops.WaitingStatus(
-                        "Kiali is configured and container is ready, but Kiali is not available"
+                        "Kiali is configured and container is ready, but Kiali's web server is not available"
                     )
                 )
 
@@ -147,7 +160,7 @@ class KialiCharm(ops.CharmBase):
             "external_services": {"prometheus": {"url": prometheus_url}},
             # TODO: Use the actual istio namespace (https://github.com/canonical/kiali-k8s-operator/issues/4)
             "istio_namespace": "istio-system",
-            "server": {"port": KIALI_PORT, "web_root": "/kiali"},
+            "server": {"port": KIALI_PORT, "web_root": self._prefix},
         }
 
     @staticmethod
@@ -206,6 +219,22 @@ class KialiCharm(ops.CharmBase):
     def peers(self):
         """Fetch the peer relation."""
         return self.model.get_relation(PEER)
+
+    @property
+    def _scheme(self) -> str:
+        return "http"
+        # TODO: implement _is_tls_ready() when tls support is added
+        # return "https" if self._is_tls_ready() else "http"
+
+    @property
+    def _internal_url(self) -> str:
+        """Return the fqdn dns-based in-cluster (private) address of kiali."""
+        return f"{self._scheme}://{socket.getfqdn()}:{KIALI_PORT}"
+
+    @property
+    def _external_url(self) -> str:
+        """Return the externally-reachable (public) address of kiali."""
+        return self._ingress.url or self._internal_url
 
 
 # Helpers
