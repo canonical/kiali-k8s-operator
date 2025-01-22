@@ -121,7 +121,7 @@ async def test_ingress_is_available(ops_test: OpsTest):
     """Assert that Kiali is exposed correctly and available via the ingress url."""
     # Arrange - get the Ingress IP
     ingress_ip = get_k8s_service_ip(
-        ops_test.model.name, f"{ISTIO_INGRESS_K8S.application_name}-lb"
+        ops_test.model.name, f"{ISTIO_INGRESS_K8S.application_name}-istio"
     )
 
     # Assert that Kiali is available via the ingress service
