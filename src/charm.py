@@ -9,6 +9,7 @@ import logging
 import socket
 from pathlib import Path
 from typing import List
+from urllib.parse import urlparse
 
 import ops
 import requests
@@ -59,7 +60,6 @@ class KialiCharm(ops.CharmBase):
             redirect_https=True,
             scheme=self._scheme,
         )
-        self._prefix = f"/{self.model.name}-{self.app.name}"
         self.framework.observe(self._ingress.on.ready, self.reconcile)
         self.framework.observe(self._ingress.on.revoked, self.reconcile)
 
@@ -97,9 +97,11 @@ class KialiCharm(ops.CharmBase):
             statuses.append(ops.BlockedStatus("Prometheus source is not available"))
 
         if prometheus_source_available:
-
+            kiali_url = (
+                self._ingress.url if self._ingress.url else self._internal_url + self._prefix
+            )
             # Only valid if we have a prometheus source
-            if not _is_kiali_available(self._external_url + self._prefix):
+            if not _is_kiali_available(kiali_url):
                 statuses.append(
                     ops.WaitingStatus(
                         "Kiali is configured and container is ready, but Kiali's web server is not available"
@@ -227,14 +229,16 @@ class KialiCharm(ops.CharmBase):
         # return "https" if self._is_tls_ready() else "http"
 
     @property
+    def _prefix(self) -> str:
+        """Return the prefix extracted from the external URL or '/kiali' if the URL is None."""
+        if self._ingress.url:
+            return urlparse(self._ingress.url).path
+        return "/kiali"
+
+    @property
     def _internal_url(self) -> str:
         """Return the fqdn dns-based in-cluster (private) address of kiali."""
         return f"{self._scheme}://{socket.getfqdn()}:{KIALI_PORT}"
-
-    @property
-    def _external_url(self) -> str:
-        """Return the externally-reachable (public) address of kiali."""
-        return self._ingress.url or self._internal_url
 
 
 # Helpers
