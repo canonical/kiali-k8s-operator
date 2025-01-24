@@ -57,7 +57,7 @@ def test_charm_processes_prometheus_relation_data(this_charm_context):
 def mock_prometheus_relation() -> Relation:
     """Return a mock relation to prometheus."""
     return Relation(
-        endpoint="prometheus",
+        endpoint="grafana-source",
         interface="grafana_datasource",
         remote_app_name=REMOTE_PROMETHEUS_APP_NAME,
         remote_app_data={
