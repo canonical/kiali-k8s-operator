@@ -97,11 +97,8 @@ class KialiCharm(ops.CharmBase):
             statuses.append(ops.BlockedStatus("Prometheus source is not available"))
 
         if prometheus_source_available:
-            kiali_url = (
-                self._ingress.url if self._ingress.url else self._internal_url + self._prefix
-            )
             # Only valid if we have a prometheus source
-            if not _is_kiali_available(kiali_url):
+            if not _is_kiali_available(self._internal_url + self._prefix):
                 statuses.append(
                     ops.WaitingStatus(
                         "Kiali is configured and container is ready, but Kiali's web server is not available"
@@ -230,10 +227,10 @@ class KialiCharm(ops.CharmBase):
 
     @property
     def _prefix(self) -> str:
-        """Return the prefix extracted from the external URL or '/kiali' if the URL is None."""
+        """Return the prefix extracted from the external URL or '/' if the URL is None."""
         if self._ingress.url:
             return urlparse(self._ingress.url).path
-        return "/kiali"
+        return "/"
 
     @property
     def _internal_url(self) -> str:

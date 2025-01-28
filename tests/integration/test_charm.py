@@ -98,7 +98,7 @@ async def test_kiali_is_available(ops_test: OpsTest):
 
     # Assert that Kiali is available via the charm's service
     assert kiali_service_ip is not None, "Kiali service IP not found"
-    resp = requests.get(url=f"http://{kiali_service_ip}:20001/kiali")
+    resp = requests.get(url=f"http://{kiali_service_ip}:20001/")
     assert resp.status_code == 200, "Kiali is not available"
 
 
