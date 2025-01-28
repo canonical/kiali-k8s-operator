@@ -5,10 +5,11 @@
 
 """A Juju charm for managing Kiali."""
 
+import json
 import logging
 import socket
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 from urllib.parse import urlparse
 
 import ops
@@ -21,6 +22,8 @@ from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
 from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
 from ops import Container, Port, StatusBase, pebble
 from ops.pebble import Layer
+from cosl.interfaces.datasource_exchange import DatasourceDict,DatasourceExchange, GrafanaDatasource
+from cosl.interfaces.utils import DatabagModel
 
 from config import CharmConfig
 
@@ -29,6 +32,8 @@ SOURCE_PATH = Path(__file__).parent
 
 
 KIALI_CONFIG_PATH = Path("/kiali-configuration/config.yaml")
+KIALI_CONFIG_TEST = Path("/kiali-configuration/config2.yaml")
+
 KIALI_PORT = 20001
 KIALI_PEBBLE_SERVICE_NAME = "kiali"
 
@@ -65,6 +70,18 @@ class KialiCharm(ops.CharmBase):
 
         # Connection to prometheus/grafana-source integration
         self._prometheus_source = GrafanaSourceConsumer(self, "prometheus")
+
+        self.datasource_exchange = DatasourceExchange(
+            self,
+            provider_endpoint="send-datasource",
+            requirer_endpoint=None,
+        )
+        self.framework.observe(
+            self.on.send_datasource_relation_changed, self.reconcile
+        )
+        self.framework.observe(
+            self.on.send_datasource_relation_departed, self.reconcile
+        )
         self.framework.observe(
             self._prometheus_source.on.sources_changed,  # pyright: ignore
             self.reconcile,
@@ -131,7 +148,8 @@ class KialiCharm(ops.CharmBase):
         if not self._container.can_connect():
             LOGGER.debug(f"Container is not ready, cannot configure {name}")
             return
-
+        ser = self._serialize_datasources(self.datasource_exchange.received_datasources)
+        self._container.push(KIALI_CONFIG_TEST, ser, make_dirs=True)
         layer = self._generate_kiali_layer()
         try:
             new_config = yaml.dump(self._generate_kiali_config())
@@ -151,6 +169,14 @@ class KialiCharm(ops.CharmBase):
         if should_restart:
             LOGGER.info(f"new config detected for {name}, restarting the service")
             self._container.restart(KIALI_PEBBLE_SERVICE_NAME)
+
+    def _serialize_datasources(self, received_datasources: Tuple[GrafanaDatasource, ...]) -> str:
+        """Serialize the received datasources into a JSON string."""
+        datasources = received_datasources
+        # Convert each GrafanaDatasource object to a dictionary
+        datasources_dict = [ds.model_dump() for ds in datasources]
+        # Serialize the list of dictionaries to a JSON string
+        return json.dumps(datasources_dict, indent=4)
 
     def _generate_kiali_config(self) -> dict:
         """Generate the Kiali configuration."""

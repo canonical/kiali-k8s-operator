@@ -64,6 +64,10 @@ provides:
     interface: prometheus_scrape
     description: |
       Exposes the Prometheus metrics endpoint providing telemetry about the Kiali instance
+  send-datasource:
+    interface: grafana_datasource_exchange
+    description: |
+      Integration to share with other COS components this charm's grafana datasources, and receive theirs.
 parts:
   charm:
     plugin: charm
