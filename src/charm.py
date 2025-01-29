@@ -6,7 +6,6 @@
 """A Juju charm for managing Kiali."""
 
 import logging
-import socket
 from pathlib import Path
 from typing import List
 from urllib.parse import urlparse
@@ -235,7 +234,7 @@ class KialiCharm(ops.CharmBase):
     @property
     def _internal_url(self) -> str:
         """Return the fqdn dns-based in-cluster (private) address of kiali."""
-        return f"{self._scheme}://{socket.getfqdn()}:{KIALI_PORT}"
+        return f"http://localhost:{KIALI_PORT}"
 
 
 # Helpers
