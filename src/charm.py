@@ -58,7 +58,7 @@ class KialiCharm(ops.CharmBase):
             port=KIALI_PORT,
             strip_prefix=False,
             redirect_https=True,
-            scheme=self._scheme,
+            scheme="http",
         )
         self.framework.observe(self._ingress.on.ready, self.reconcile)
         self.framework.observe(self._ingress.on.revoked, self.reconcile)
@@ -220,12 +220,6 @@ class KialiCharm(ops.CharmBase):
         return self.model.get_relation(PEER)
 
     @property
-    def _scheme(self) -> str:
-        return "http"
-        # TODO: implement _is_tls_ready() when tls support is added
-        # return "https" if self._is_tls_ready() else "http"
-
-    @property
     def _prefix(self) -> str:
         """Return the prefix extracted from the external URL or '/' if the URL is None."""
         if self._ingress.url:
@@ -235,7 +229,7 @@ class KialiCharm(ops.CharmBase):
     @property
     def _internal_url(self) -> str:
         """Return the fqdn dns-based in-cluster (private) address of kiali."""
-        return f"{self._scheme}://{socket.getfqdn()}:{KIALI_PORT}"
+        return f"http://{socket.getfqdn()}:{KIALI_PORT}"
 
 
 # Helpers
