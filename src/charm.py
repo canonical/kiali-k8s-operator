@@ -57,7 +57,7 @@ class KialiCharm(ops.CharmBase):
             port=KIALI_PORT,
             strip_prefix=False,
             redirect_https=True,
-            scheme=self._scheme,
+            scheme="http",
         )
         self.framework.observe(self._ingress.on.ready, self.reconcile)
         self.framework.observe(self._ingress.on.revoked, self.reconcile)
@@ -217,12 +217,6 @@ class KialiCharm(ops.CharmBase):
     def peers(self):
         """Fetch the peer relation."""
         return self.model.get_relation(PEER)
-
-    @property
-    def _scheme(self) -> str:
-        return "http"
-        # TODO: implement _is_tls_ready() when tls support is added
-        # return "https" if self._is_tls_ready() else "http"
 
     @property
     def _prefix(self) -> str:
