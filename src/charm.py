@@ -188,6 +188,7 @@ class KialiCharm(ops.CharmBase):
         kiali_config = KialiConfigSpec(
             auth=AuthConfig(strategy="anonymous"),
             external_services=external_services,
+            # TODO: Use the actual istio namespace (https://github.com/canonical/kiali-k8s-operator/issues/4)
             istio_namespace="istio-system",
             server=ServerConfig(port=KIALI_PORT, web_root=self._prefix),
         )
