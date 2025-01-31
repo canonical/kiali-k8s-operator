@@ -21,7 +21,14 @@ from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
 from ops import Container, Port, StatusBase, pebble
 from ops.pebble import Layer
 
-from config import CharmConfig
+from charm_config import CharmConfig
+from workload_config import (
+    AuthConfig,
+    ExternalServicesConfig,
+    KialiConfigSpec,
+    PrometheusConfig,
+    ServerConfig,
+)
 
 LOGGER = logging.getLogger(__name__)
 SOURCE_PATH = Path(__file__).parent
@@ -151,15 +158,40 @@ class KialiCharm(ops.CharmBase):
     def _generate_kiali_config(self) -> dict:
         """Generate the Kiali configuration."""
         prometheus_url = self._get_prometheus_source_url()
-        return {
-            "auth": {
-                "strategy": "anonymous",
-            },
-            "external_services": {"prometheus": {"url": prometheus_url}},
-            # TODO: Use the actual istio namespace (https://github.com/canonical/kiali-k8s-operator/issues/4)
-            "istio_namespace": "istio-system",
-            "server": {"port": KIALI_PORT, "web_root": self._prefix},
-        }
+        external_services = ExternalServicesConfig(prometheus=PrometheusConfig(url=prometheus_url))
+
+        # TODO: implement _get_tempo_source_url()
+        # tempo_url = self._get_tempo_source_url()
+        # if tempo_url:
+        #     external_services.tracing = TracingConfig(
+        #         enabled=True,
+        #         internal_url=tempo_url,
+        #         use_grpc=True,
+        #         external_url=tempo_url,
+        #         grpc_port=9096,
+        # TODO: work on below functionality when we figure out how to get tempo's grafana source uid
+        # tempo_config=TracingTempoConfig(
+        #     org_id="1",
+        #     datasource_uid=self._get_tempo_source_uid(),
+        #     url_format="grafana",
+        # ),
+        # )
+
+        # TODO:implement _get_grafana_source_url()
+        # grafana_url = self._get_grafana_source_url()
+        # if grafana_url:
+        # external_services.grafana = GrafanaConfig(
+        #     enabled=True,
+        #     external_url=grafana_url,
+        # )
+
+        kiali_config = KialiConfigSpec(
+            auth=AuthConfig(strategy="anonymous"),
+            external_services=external_services,
+            istio_namespace="istio-system",
+            server=ServerConfig(port=KIALI_PORT, web_root=self._prefix),
+        )
+        return kiali_config.model_dump(exclude_none=True)
 
     @staticmethod
     def _generate_kiali_layer() -> Layer:
