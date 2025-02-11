@@ -7,7 +7,7 @@
 
 import logging
 from pathlib import Path
-from typing import List
+from typing import List, TypedDict, Optional
 from urllib.parse import urlparse
 
 import ops
@@ -18,6 +18,7 @@ from charms.istio_beacon_k8s.v0.service_mesh import ServiceMeshConsumer
 from charms.loki_k8s.v1.loki_push_api import LogForwarder
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
 from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
+from cosl.interfaces.datasource_exchange import DatasourceExchange
 from ops import Container, Port, StatusBase, pebble
 from ops.pebble import Layer
 
@@ -28,6 +29,9 @@ from workload_config import (
     KialiConfigSpec,
     PrometheusConfig,
     ServerConfig,
+    TracingConfig,
+    TracingTempoConfig,
+    GrafanaConfig,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -40,6 +44,25 @@ KIALI_PEBBLE_SERVICE_NAME = "kiali"
 
 # TODO: Required by the GrafanaSourceConsumer library, but barely used in this charm.  Can we remove it?
 PEER = "grafana"
+
+
+TEMPO_DATASOURCE_EXCHANGE_RELAION_NAME = "tempo-datasource-exchange"
+
+
+class TempoConfigurationData(TypedDict):
+    """The configuration data for the Tempo datasource in Kiali."""
+
+    datasource_uid: str
+    external_url: str
+    grpc_port: int
+    internal_url: str
+
+
+class UrlConfiguration(TypedDict):
+    """The URLs of an application."""
+
+    internal: str
+    external: str
 
 
 class KialiCharm(ops.CharmBase):
@@ -90,6 +113,17 @@ class KialiCharm(ops.CharmBase):
         # Expose the Kiali workload through the service
         self.unit.set_ports(Port("tcp", KIALI_PORT))
 
+        # TODO: Once this exists in grafana
+        self._grafana_metadata = GrafanaMetadataRequirer(...)
+
+        # TODO: Once this exists in Tempo
+        self._tempo_metadata = TempoMetadataRequirer(...)
+        self._tempo_datasource_exchange = DatasourceExchange(
+            charm=self,
+            requirer_endpoint=TEMPO_DATASOURCE_EXCHANGE_RELAION_NAME
+        )
+        self.framework.observe(self.on[TEMPO_DATASOURCE_EXCHANGE_RELAION_NAME].relation_changed, self.reconcile)
+
     def on_collect_status(self, e: ops.CollectStatusEvent):
         """Collect and report the statuses of the charm."""
         # TODO: Extract the generation of these statuses to a helper method, that way other parts of the charm can know
@@ -99,17 +133,37 @@ class KialiCharm(ops.CharmBase):
         if not self._container.can_connect():
             statuses.append(ops.WaitingStatus("Waiting for the Kiali container to be ready"))
 
-        if not (prometheus_source_available := self._is_prometheus_source_available()):
-            statuses.append(ops.BlockedStatus("Prometheus source is not available"))
+        # TODO: Should these all be separate status discoveries, or should we just use whatever the
+        #  _generate_kiali_config emits?  Discovering these all individually gives us richer status reporting, but means
+        #  we're duplicating what we're doing in reconcile.
+        try:
+            self._get_prometheus_source_url()
+        except PrometheusMetadataMissingError as e:
+            statuses.append(ops.BlockedStatus(str(e)))
+        except PrometheusMetadataIncompleteError as e:
+            statuses.append(ops.WaitingStatus(str(e)))
 
-        if prometheus_source_available:
-            # Only valid if we have a prometheus source
-            if not _is_kiali_available(self._internal_url + self._prefix):
-                statuses.append(
-                    ops.WaitingStatus(
-                        "Kiali is configured and container is ready, but Kiali's web server is not available"
-                    )
+        try:
+            self._get_grafana_uid()
+        except GrafanaMetadataMissingError as e:
+            statuses.append(ops.BlockedStatus(str(e)))
+        except GrafanaMetadataIncompleteError as e:
+            statuses.append(ops.WaitingStatus(str(e)))
+
+        try:
+            self._get_tempo_configuration()
+        except TempoConfigurationMissingError as e:
+            statuses.append(ops.BlockedStatus(str(e)))
+        except TempoConfigurationIncompleteError as e:
+            statuses.append(ops.WaitingStatus(str(e)))
+
+        if not _is_kiali_available(self._internal_url + self._prefix):
+            statuses.append(
+                ops.WaitingStatus(
+                    "Kiali workload is not available.  See other logs/statuses for reasons why.  If no other statuses"
+                    " are available, this may be transient."
                 )
+            )
 
         if len(statuses) == 0:
             statuses.append(ops.ActiveStatus())
@@ -122,7 +176,7 @@ class KialiCharm(ops.CharmBase):
         new_config = None
         try:
             new_config = self._generate_kiali_config()
-        except PrometheusSourceError as e:
+        except ConfigurationError as e:
             LOGGER.warning(f"Failed to generate Kiali configuration, got error: {e}")
             # TODO: actually shut down the service and remove the configuration
             # LOGGER.warning(f"Shutting down {name} service and removing existing configuration")
@@ -161,34 +215,38 @@ class KialiCharm(ops.CharmBase):
             self._container.restart(KIALI_PEBBLE_SERVICE_NAME)
 
     def _generate_kiali_config(self) -> dict:
-        """Generate the Kiali configuration."""
+        """Generate the Kiali configuration.
+
+        This method does not catch exceptions from the underlying configuration helpers - these will pass through to
+        the caller.
+        """
+        # All helpers called here are expected to:
+        # * Return configuration data if it is available
+        # * Return None if the configuration is optional and not available
+        # * Raise an exception if the configuration is required and not available, or if the configuration is incomplete
+        #   (for example, if we are waiting on a relation to provide the data)
         prometheus_url = self._get_prometheus_source_url()
         external_services = ExternalServicesConfig(prometheus=PrometheusConfig(url=prometheus_url))
 
-        # TODO: implement _get_tempo_source_url()
-        # tempo_url = self._get_tempo_source_url()
-        # if tempo_url:
-        #     external_services.tracing = TracingConfig(
-        #         enabled=True,
-        #         internal_url=tempo_url,
-        #         use_grpc=True,
-        #         external_url=tempo_url,
-        #         grpc_port=9096,
-        # TODO: work on below functionality when we figure out how to get tempo's grafana source uid
-        # tempo_config=TracingTempoConfig(
-        #     org_id="1",
-        #     datasource_uid=self._get_tempo_source_uid(),
-        #     url_format="grafana",
-        # ),
-        # )
+        if tempo_configuration_data := self._get_tempo_configuration():
+            external_services.tracing = TracingConfig(
+                enabled=True,
+                internal_url=tempo_configuration_data['internal_url'],
+                external_url=tempo_configuration_data['external_url'],
+                use_grpc=True,
+                grpc_port=tempo_configuration_data['grpc_port'],
+                tempo_config=TracingTempoConfig(
+                    org_id="1",
+                    datasource_uid=tempo_configuration_data['datasource_uid'],
+                    url_format="grafana",
+                ),
+            )
 
-        # TODO:implement _get_grafana_source_url()
-        # grafana_url = self._get_grafana_source_url()
-        # if grafana_url:
-        # external_services.grafana = GrafanaConfig(
-        #     enabled=True,
-        #     external_url=grafana_url,
-        # )
+        if grafana_url := self._get_grafana_source_url():
+            external_services.grafana = GrafanaConfig(
+                enabled=True,
+                external_url=grafana_url,
+            )
 
         kiali_config = KialiConfigSpec(
             auth=AuthConfig(strategy="anonymous"),
@@ -219,25 +277,130 @@ class KialiCharm(ops.CharmBase):
             }
         )
 
-    def _get_prometheus_source_url(self):
+    def _get_grafana_uid(self) -> str:
+        """Return the UID of the related Grafana.
+
+        Raises:
+          GrafanaMetadataMissingError: If no grafana is related to this application
+          GrafanaMetadataIncompleteError: If a grafana is related to this application, but its data is incomplete.
+        """
+        if len(self._grafana_metadata) == 0:
+            raise GrafanaMetadataMissingError("No grafana available over the grafana-metadata relation")
+
+        grafana_metadata = self._grafana_metadata.get_data()
+        if not grafana_metadata:
+            raise GrafanaMetadataIncompleteError("Waiting on related grafana application's metadata")
+
+        return grafana_metadata.grafana_uid
+
+    def _get_prometheus_source_url(self) -> str:
         """Get the Prometheus source configuration.
 
-        Raises a SourceNotAvailableError if there are no sources or the data is not complete.
+        Raises:
+            PrometheusMetadataMissingError: If no Prometheus sources are available
+            PrometheusMetadataIncompleteError: If Prometheus sources are available, but the data is incomplete
         """
+        # TODO: This currently uses the grafana-source relation, but will be refactored to use prometheus-api soon.
+        #       When that refactor occurs, error handling here can be cleaned up.
         if not (prometheus_sources := self._prometheus_source.sources):
-            raise PrometheusSourceError("No Prometheus sources available")
+            raise PrometheusMetadataMissingError("No Prometheus sources available")
+        # TODO: Replace this with limit=1
         if len(prometheus_sources) > 1:
-            raise PrometheusSourceError("Multiple Prometheus sources available, expected only one")
+            # TODO: This error is mislabeled, but will be replaced when we switch to limiting this to 1 anyway
+            raise PrometheusMetadataMissingError("Multiple Prometheus sources available, expected only one")
         if not (url := prometheus_sources[0].get("url", None)):
-            raise PrometheusSourceError("Prometheus source data is incomplete - url not available")
+            raise PrometheusMetadataIncompleteError("Prometheus source data is incomplete - url not available")
         return url
+
+    def _get_tempo_configuration(self) -> Optional[TempoConfigurationData]:
+        """Return configuration data for the related Tempo.
+
+        Returns None if we are not related to a tempo.
+
+        Raises:
+          GrafanaMetadataMissingError: If a required relation for configuring Tempo is missing.
+          TempoConfigurationIncompleteError: If a Tempo is related to this application, but its data is incomplete.
+        """
+        try:
+            tempo_metadata = self._get_tempo_metadata()
+        except TempoMetadataIncompleteError as e:
+            raise TempoConfigurationIncompleteError(f"Tempo metadata is incomplete.  Got error: {e}")
+
+        if not tempo_metadata:
+            # We have no tempo related to us
+            return None
+
+        try:
+            tempo_datasource_uid = self._get_tempo_datasource_uid()
+        except TempoDatasourceMissingError as e:
+            raise TempoConfigurationMissingError(f"Tempo datasource data is missing.  Got error: {e}")
+        except TempoDatasourceIncompleteError as e:
+            raise TempoConfigurationIncompleteError(f"Tempo datasource data is incomplete, possibly because are waiting on "
+                                              f"the related application.  Got error: {e}")
+
+        return TempoConfigurationData(
+            internal_url=tempo_metadata.internal_url,
+            external_url=tempo_metadata.ingress_url,
+            grpc_port=tempo_metadata.grpc_port,
+            datasource_uid=tempo_datasource_uid,
+        )
+
+    def _get_tempo_metadata(self):
+        """Get the Tempo source urls (internal and external).
+
+        Raises:
+            TempoConfigurationIncompleteError: If a Tempo is related to this application, but its data is incomplete.
+        """
+        # TODO: Use the real data type here
+        if len(self._tempo_metadata) == 0:
+            return None
+
+        tempo_metadata = self._tempo_metadata.get_data()
+        if not tempo_metadata:
+            raise TempoMetadataIncompleteError("Waiting on related tempo application's metadata")
+
+        return tempo_metadata
+
+    def _get_tempo_datasource_uid(self):
+        """Get the Tempo datasource uid.
+
+        Returns the first related datasource that is a tempo datasource and has the same grafana uid as the known
+        grafana.
+
+        Will raise:
+          TempoDatasourceMissingError: If no applications are related, or applications are related but have sent only
+                                       non-tempo datasources
+          TempoDatasourceIncompleteError: If a datasource is related, but has not yet provided data
+        """
+        try:
+            grafana_source_uid = self._get_grafana_uid()
+        except GrafanaMetadataMissingError as e:
+            raise TempoDatasourceMissingError(f"Tempo datasource is missing because Grafana source is missing.  Got"
+                                              f" error: {e}")
+        except GrafanaMetadataIncompleteError as e:
+            raise TempoDatasourceMissingError(f"Tempo datasource is missing because Grafana source is incomplete.  Got"
+                                              f" error: {e}")
+
+        if len(self.model.relations.get(TEMPO_DATASOURCE_EXCHANGE_RELAION_NAME, ())) == 0:
+            raise TempoDatasourceMissingError(f"No tempo available over the {TEMPO_DATASOURCE_EXCHANGE_RELAION_NAME} relation")
+
+        tempo_datasources = self._tempo_datasource_exchange.received_datasources
+        if len(tempo_datasources) == 0:
+            TempoDatasourceIncompleteError("Tempo datasource relation exists, but no data has been provided")
+
+        for datasource in tempo_datasources:
+            if datasource.type != "tempo":
+                continue
+            if datasource.grafana_uid == grafana_source_uid:
+                return datasource.uid
+        raise TempoDatasourceIncompleteError("Tempo datasource relation exists, but it does not provide any tempo datasources.")
 
     def _is_prometheus_source_available(self):
         """Return True if the Prometheus source is available, else False."""
         try:
             self._get_prometheus_source_url()
             return True
-        except PrometheusSourceError:
+        except ConfigurationError:
             return False
 
     # Properties
@@ -301,10 +464,53 @@ def _is_kiali_available(kiali_url):
 
     return True
 
+class ConfigurationError(Exception):
+    """Base exception for configuration errors."""
+    pass
 
-class PrometheusSourceError(Exception):
-    """Raised when the Prometheus data is not available."""
 
+class PrometheusMetadataMissingError(ConfigurationError):
+    """Raised when the Prometheus metadata is not available."""
+    pass
+
+
+class PrometheusMetadataIncompleteError(ConfigurationError):
+    """Raised when we have a relation to a Prometheus, but it has not yet provided metadata."""
+    pass
+
+
+class TempoDatasourceMissingError(ConfigurationError):
+    """Raised when the tempo datasource is not available."""
+    pass
+
+
+class TempoDatasourceIncompleteError(ConfigurationError):
+    """Raised when we have a relation to a tempo datasource, but it has not yet provided datasource info."""
+    pass
+
+
+class TempoMetadataIncompleteError(ConfigurationError):
+    """Raised when we have a tempo relation but the metadata is not available."""
+    pass
+
+
+class TempoConfigurationIncompleteError(ConfigurationError):
+    """Raised when we have a tempo relation but the configuration is not available."""
+    pass
+
+
+class TempoConfigurationMissingError(ConfigurationError):
+    """Raised when required tempo configurations are missing."""
+    pass
+
+
+class GrafanaMetadataMissingError(ConfigurationError):
+    """Raised when the grafana metadata is not available."""
+    pass
+
+
+class GrafanaMetadataIncompleteError(ConfigurationError):
+    """Raised when we have a relation to a grafana, but it has not yet provided metadata."""
     pass
 
 
