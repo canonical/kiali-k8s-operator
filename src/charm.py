@@ -119,30 +119,35 @@ class KialiCharm(ops.CharmBase):
 
     def reconcile(self, _event: ops.ConfigChangedEvent):
         """Reconcile the entire state of the charm."""
-        self._configure_kiali_workload()
+        new_config = None
+        try:
+            new_config = self._generate_kiali_config()
+        except PrometheusSourceError as e:
+            LOGGER.warning(f"Failed to generate Kiali configuration, got error: {e}")
+            # TODO: actually shut down the service and remove the configuration
+            # LOGGER.warning(f"Shutting down {name} service and removing existing configuration")
 
-    def _configure_kiali_workload(self):
+        if new_config:
+            self._configure_kiali_workload(new_config)
+
+    def _configure_kiali_workload(self, new_config):
         """Configure the Kiali workload, if possible, logging errors otherwise.
 
         This will generate and push the Kiali configuration to the container, restarting the service if necessary.
         The purpose here is that this should always attempt to configure/start Kiali, but it does not guarantee Kiali is
         running after completion.  If any known errors occur, they will be logged and this method will return without
         error.  To confirm if Kiali is working, check the status of the Kiali workload directly.
+
+        Args:
+            new_config: The new configuration to push to the Kiali workload.
         """
-        # TODO: Can we make this generic and share with other charms?
         name = "kiali"
         if not self._container.can_connect():
             LOGGER.debug(f"Container is not ready, cannot configure {name}")
             return
 
         layer = self._generate_kiali_layer()
-        try:
-            new_config = yaml.dump(self._generate_kiali_config())
-        except PrometheusSourceError as e:
-            LOGGER.warning(f"Failed to generate {name} configuration, got error: {e}")
-            # TODO: actually shut down the service and remove the configuration
-            # LOGGER.warning(f"Shutting down {name} service and removing existing configuration")
-            return
+        new_config = yaml.dump(new_config)
 
         should_restart = not _is_container_file_equal_to(
             self._container, str(KIALI_CONFIG_PATH), new_config
