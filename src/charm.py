@@ -383,7 +383,7 @@ class KialiCharm(ops.CharmBase):
             raise ConfigurationWaitingError(f"Tempo datasource is missing because Grafana source is incomplete.  Got"
                                               f" error: {e}")
 
-        if len(self.model.relations.get(TEMPO_DATASOURCE_EXCHANGE_RELAION_NAME, ())) == 0:
+        if len(self.model.relations.get(TEMPO_DATASOURCE_EXCHANGE_RELATION_NAME, ())) == 0:
             raise ConfigurationBlockingError(f"No tempo available over the {TEMPO_DATASOURCE_EXCHANGE_RELAION_NAME} relation")
 
         tempo_datasources = self._tempo_datasource_exchange.received_datasources
