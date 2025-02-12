@@ -18,7 +18,7 @@ from charms.istio_beacon_k8s.v0.service_mesh import ServiceMeshConsumer
 from charms.loki_k8s.v1.loki_push_api import LogForwarder
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
 from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
-from cosl.interfaces.datasource_exchange import DatasourceExchange
+from cosl.interfaces.datasource_exchange import DatasourceExchange, GrafanaSourceAppData
 from ops import Container, Port, StatusBase, pebble
 from ops.pebble import Layer
 
@@ -124,38 +124,48 @@ class KialiCharm(ops.CharmBase):
         )
         self.framework.observe(self.on[TEMPO_DATASOURCE_EXCHANGE_RELAION_NAME].relation_changed, self.reconcile)
 
-    def on_collect_status(self, e: ops.CollectStatusEvent):
-        """Collect and report the statuses of the charm."""
-        # TODO: Extract the generation of these statuses to a helper method, that way other parts of the charm can know
-        #  if the charm is active too.
+    def reconcile(self, _event: ops.ConfigChangedEvent):
+        """Reconcile the entire state of the charm."""
         statuses: List[StatusBase] = []
 
-        if not self._container.can_connect():
-            statuses.append(ops.WaitingStatus("Waiting for the Kiali container to be ready"))
-
-        # TODO: Should these all be separate status discoveries, or should we just use whatever the
-        #  _generate_kiali_config emits?  Discovering these all individually gives us richer status reporting, but means
-        #  we're duplicating what we're doing in reconcile.
         try:
-            self._get_prometheus_source_url()
+            prometheus_url = self._get_prometheus_source_url()
         except ConfigurationBlockingError as e:
             statuses.append(ops.BlockedStatus(str(e)))
+            prometheus_url = None
         except ConfigurationWaitingError as e:
             statuses.append(ops.WaitingStatus(str(e)))
+            prometheus_url = None
 
         try:
-            self._get_grafana_uid()
+            grafana_metadata = self._get_grafana_configuration()
         except ConfigurationBlockingError as e:
             statuses.append(ops.BlockedStatus(str(e)))
+            grafana_metadata = None
         except ConfigurationWaitingError as e:
             statuses.append(ops.WaitingStatus(str(e)))
+            grafana_metadata = None
 
         try:
-            self._get_tempo_configuration()
+            tempo_configuration = self._get_tempo_configuration()
         except ConfigurationBlockingError as e:
             statuses.append(ops.BlockedStatus(str(e)))
+            tempo_configuration = None
         except ConfigurationWaitingError as e:
             statuses.append(ops.WaitingStatus(str(e)))
+            tempo_configuration = None
+
+        # prometheus and grafana config are required, but tempo is optional
+        try:
+            kiali_config = self._generate_kiali_config(prometheus_url=prometheus_url, grafana_metadata=grafana_metadata, tempo_configuration_data=tempo_configuration)
+        except ConfigurationError as e:
+            statuses.append(ops.BlockedStatus(str(e)))
+            kiali_config = None
+
+        try:
+            self._configure_kiali_workload(kiali_config)
+        except ConfigurationError as e:
+            statuses.append(ops.BlockedStatus(str(e)))
 
         if not _is_kiali_available(self._internal_url + self._prefix):
             statuses.append(
@@ -169,20 +179,10 @@ class KialiCharm(ops.CharmBase):
             statuses.append(ops.ActiveStatus())
 
         for status in statuses:
-            e.add_status(status)
+            # TODO: Log these statuses
+            pass
 
-    def reconcile(self, _event: ops.ConfigChangedEvent):
-        """Reconcile the entire state of the charm."""
-        new_config = None
-        try:
-            new_config = self._generate_kiali_config()
-        except ConfigurationError as e:
-            LOGGER.warning(f"Failed to generate Kiali configuration, got error: {e}")
-            # TODO: actually shut down the service and remove the configuration
-            # LOGGER.warning(f"Shutting down {name} service and removing existing configuration")
-
-        if new_config:
-            self._configure_kiali_workload(new_config)
+        self.unit.status = get_worst_status(statuses)
 
     def _configure_kiali_workload(self, new_config):
         """Configure the Kiali workload, if possible, logging errors otherwise.
@@ -198,7 +198,7 @@ class KialiCharm(ops.CharmBase):
         name = "kiali"
         if not self._container.can_connect():
             LOGGER.debug(f"Container is not ready, cannot configure {name}")
-            return
+            raise ConfigurationWaitingError("Container is not ready, cannot configure Kiali")
 
         layer = self._generate_kiali_layer()
         new_config = yaml.dump(new_config)
@@ -214,23 +214,16 @@ class KialiCharm(ops.CharmBase):
             LOGGER.info(f"new config detected for {name}, restarting the service")
             self._container.restart(KIALI_PEBBLE_SERVICE_NAME)
 
-    def _generate_kiali_config(self) -> dict:
-        """Generate the Kiali configuration.
+    def _generate_kiali_config(self, prometheus_url: str,  grafana_metadata: GrafanaMetadataAppData, tempo_configuration_data: Optional[TempoConfigurationData] = None, ) -> dict:
+        """Generate the Kiali configuration."""
+        if not prometheus_url:
+            raise ConfigurationBlockingError("Cannot configure Kiali - no Prometheus url available")
+        if not grafana_metadata:
+            raise ConfigurationBlockingError("Cannot configure Kiali - no Grafana metadata available")
 
-        This method does not catch exceptions from the underlying configuration helpers - these will pass through to
-        the caller.
-        """
-        # All helpers called here are expected to:
-        # * Return configuration data if it is available
-        # * Return None if the configuration is optional and not available
-        # * Raise a:
-        #   * ConfigurationBlockingError is required and not available
-        #   * ConfigurationWaitingError if the configuration is incomplete (for example, if we are waiting on a relation
-        #     to provide the data)
-        prometheus_url = self._get_prometheus_source_url()
         external_services = ExternalServicesConfig(prometheus=PrometheusConfig(url=prometheus_url))
 
-        if tempo_configuration_data := self._get_tempo_configuration():
+        if tempo_configuration_data:
             external_services.tracing = TracingConfig(
                 enabled=True,
                 internal_url=tempo_configuration_data['internal_url'],
@@ -244,10 +237,10 @@ class KialiCharm(ops.CharmBase):
                 ),
             )
 
-        if grafana_url := self._get_grafana_source_url():
+        if grafana_metadata:
             external_services.grafana = GrafanaConfig(
                 enabled=True,
-                external_url=grafana_url,
+                external_url=grafana_metadata.url,
             )
 
         kiali_config = KialiConfigSpec(
@@ -279,8 +272,8 @@ class KialiCharm(ops.CharmBase):
             }
         )
 
-    def _get_grafana_uid(self) -> str:
-        """Return the UID of the related Grafana.
+    def _get_grafana_configuration(self) -> GrafanaMetadataAppData:
+        """Return the Grafana configuration.
 
         Raises:
           ConfigurationBlockingError: If no grafana is related to this application
@@ -293,7 +286,7 @@ class KialiCharm(ops.CharmBase):
         if not grafana_metadata:
             raise ConfigurationWaitingError("Waiting on related grafana application's metadata")
 
-        return grafana_metadata.grafana_uid
+        return grafana_metadata
 
     def _get_prometheus_source_url(self) -> str:
         """Get the Prometheus source configuration.
@@ -375,7 +368,7 @@ class KialiCharm(ops.CharmBase):
           ConfigurationWaitingError: If a datasource is related, but has not yet provided data
         """
         try:
-            grafana_source_uid = self._get_grafana_uid()
+            grafana_metadata = self._get_grafana_configuration()
         except ConfigurationBlockingError as e:
             raise ConfigurationBlockingError(f"Tempo datasource is missing because Grafana source is missing.  Got"
                                               f" error: {e}")
@@ -393,7 +386,7 @@ class KialiCharm(ops.CharmBase):
         for datasource in tempo_datasources:
             if datasource.type != "tempo":
                 continue
-            if datasource.grafana_uid == grafana_source_uid:
+            if datasource.grafana_uid == grafana_metadata.uid:
                 return datasource.uid
         raise ConfigurationWaitingError("Tempo datasource relation exists, but it does not provide any tempo datasources.")
 
