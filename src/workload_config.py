@@ -15,6 +15,12 @@ class AuthConfig(BaseModel):
     strategy: str = "anonymous"
 
 
+class DeploymentConfig(BaseModel):
+    """Configuration for deployment."""
+
+    view_only_mode: bool = True
+
+
 class ExternalServiceConfig(BaseModel):
     """Configuration for an external service endpoint."""
 
@@ -74,6 +80,7 @@ class KialiConfigSpec(BaseModel):
     """Specification for the complete Kiali configuration."""
 
     auth: AuthConfig
+    deployment: DeploymentConfig
     external_services: ExternalServicesConfig
     istio_namespace: str = Field(
         default="istio-system", description="Namespace for Istio resources"

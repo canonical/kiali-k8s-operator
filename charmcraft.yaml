@@ -64,6 +64,17 @@ provides:
     interface: prometheus_scrape
     description: |
       Exposes the Prometheus metrics endpoint providing telemetry about the Kiali instance
+
+config:
+  options:
+    view-only-mode:
+      type: boolean
+      default: true
+      description: >
+        Enables view-only mode, restricting Kiali to only read service mesh resources without exposing the ability to make any changes to cluster/mesh resources.
+        By design, this defaults to true to encourage cluster admins and charm authors to make mesh modifications via Juju relations,
+        thereby avoiding state mismatches between Juju and the mesh (since Juju does not track changes made in the Kiali dashboard).
+
 parts:
   charm:
     plugin: charm

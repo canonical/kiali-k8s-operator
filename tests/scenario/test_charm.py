@@ -8,6 +8,8 @@ import pytest
 from ops import ActiveStatus, BlockedStatus, WaitingStatus
 from scenario import Container, PeerRelation, Relation, State
 
+from charm import PrometheusSourceError
+
 REMOTE_PROMETHEUS_APP_NAME = "grafana"
 REMOTE_PROMETHEUS_MODEL = "some-model"
 REMOTE_PROMETHEUS_MODEL_UUID = "1"
@@ -171,3 +173,57 @@ def test_charm_given_inputs(
         out = this_charm_context.run(this_charm_context.on.config_changed(), state)
 
     assert isinstance(out.unit_status, expected_status)
+
+
+@pytest.mark.parametrize(
+    "container, relations, expected",
+    [
+        (
+            # Active: All inputs provided.
+            Container(name="kiali", can_connect=True),
+            [
+                mock_prometheus_relation(),
+                mock_grafana_consumer_peer_relation(),
+            ],
+            {
+                "auth": {"strategy": "anonymous"},
+                "deployment": {"view_only_mode": True},
+                "external_services": {"prometheus": {"url": "http://prometheus:9090"}},
+                "istio_namespace": "istio-system",
+                "server": {"port": 20001, "web_root": "/"},
+            },
+        ),
+        (
+            # Inactive: Missing Prometheus relation should raise an exception.
+            Container(name="kiali", can_connect=True),
+            [],
+            PrometheusSourceError,
+        ),
+    ],
+)
+def test_kiali_config(
+    this_charm,
+    this_charm_context,
+    container,
+    relations,
+    expected,
+):
+    """Test that the generated kiali configuration matches the expected output or raises the expected exception."""
+    state = State(
+        containers=[container],
+        relations=relations,
+        leader=True,
+    )
+
+    with this_charm_context(
+        this_charm_context.on.config_changed(),
+        state=state,
+    ) as manager:
+        charm: this_charm = manager.charm
+        # If we expect an exception, assert that it's raised.
+        if isinstance(expected, type) and issubclass(expected, Exception):
+            with pytest.raises(expected, match="No Prometheus sources available"):
+                _ = charm._generate_kiali_config()
+        else:
+            kiali_config = charm._generate_kiali_config()
+            assert kiali_config == expected
