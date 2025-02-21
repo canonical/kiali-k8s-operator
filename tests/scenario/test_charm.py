@@ -2,11 +2,14 @@
 # Copyright 2024 Canonical Ltd.
 # See LICENSE file for licensing details.
 import json
+from contextlib import nullcontext as does_not_raise
 from unittest.mock import patch
 
 import pytest
 from ops import ActiveStatus, BlockedStatus, WaitingStatus
 from scenario import Container, PeerRelation, Relation, State
+
+from charm import PrometheusSourceError
 
 REMOTE_PROMETHEUS_APP_NAME = "grafana"
 REMOTE_PROMETHEUS_MODEL = "some-model"
@@ -171,3 +174,57 @@ def test_charm_given_inputs(
         out = this_charm_context.run(this_charm_context.on.config_changed(), state)
 
     assert isinstance(out.unit_status, expected_status)
+
+
+@pytest.mark.parametrize(
+    "container, relations, expected, expected_context",
+    [
+        (
+            # Active: All inputs provided.
+            Container(name="kiali", can_connect=True),
+            [
+                mock_prometheus_relation(),
+                mock_grafana_consumer_peer_relation(),
+            ],
+            {
+                "auth": {"strategy": "anonymous"},
+                "deployment": {"view_only_mode": True},
+                "external_services": {"prometheus": {"url": "http://prometheus:9090"}},
+                "istio_namespace": "istio-system",
+                "server": {"port": 20001, "web_root": "/"},
+            },
+            does_not_raise(),
+        ),
+        (
+            # Inactive: Missing Prometheus relation should raise an exception.
+            Container(name="kiali", can_connect=True),
+            [],
+            None,
+            pytest.raises(PrometheusSourceError),
+        ),
+    ],
+)
+def test_kiali_config(
+    this_charm,
+    this_charm_context,
+    container,
+    relations,
+    expected,
+    expected_context,
+):
+    """Test that the generated kiali configuration matches the expected output or raises the expected exception."""
+    state = State(
+        containers=[container],
+        relations=relations,
+        leader=True,
+    )
+    with this_charm_context(
+        this_charm_context.on.config_changed(),
+        state=state,
+    ) as manager:
+        charm: this_charm = manager.charm
+        # Default value in case we raise an exception
+        kiali_config = None
+        with expected_context:
+            kiali_config = charm._generate_kiali_config()
+        assert kiali_config == expected

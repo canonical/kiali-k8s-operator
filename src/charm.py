@@ -24,6 +24,7 @@ from ops.pebble import Layer
 from charm_config import CharmConfig
 from workload_config import (
     AuthConfig,
+    DeploymentConfig,
     ExternalServicesConfig,
     KialiConfigSpec,
     PrometheusConfig,
@@ -192,6 +193,7 @@ class KialiCharm(ops.CharmBase):
 
         kiali_config = KialiConfigSpec(
             auth=AuthConfig(strategy="anonymous"),
+            deployment=DeploymentConfig(view_only_mode=self.parsed_config["view-only-mode"]),
             external_services=external_services,
             # TODO: Use the actual istio namespace (https://github.com/canonical/kiali-k8s-operator/issues/4)
             istio_namespace="istio-system",
@@ -248,7 +250,7 @@ class KialiCharm(ops.CharmBase):
         if self._parsed_config is None:
             config = dict(self.model.config.items())
             self._parsed_config = CharmConfig(**config)  # pyright: ignore
-        return self._parsed_config.dict(by_alias=True)
+        return self._parsed_config.model_dump(by_alias=True)
 
     # TODO: Required by the GrafanaSourceConsumer library, but not used in this charm.  Can we remove it?
     @property
