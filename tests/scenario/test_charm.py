@@ -2,6 +2,7 @@
 # Copyright 2024 Canonical Ltd.
 # See LICENSE file for licensing details.
 import json
+from contextlib import nullcontext as does_not_raise
 from unittest.mock import patch
 
 import pytest
@@ -176,7 +177,7 @@ def test_charm_given_inputs(
 
 
 @pytest.mark.parametrize(
-    "container, relations, expected",
+    "container, relations, expected, expected_context",
     [
         (
             # Active: All inputs provided.
@@ -192,12 +193,14 @@ def test_charm_given_inputs(
                 "istio_namespace": "istio-system",
                 "server": {"port": 20001, "web_root": "/"},
             },
+            does_not_raise(),
         ),
         (
             # Inactive: Missing Prometheus relation should raise an exception.
             Container(name="kiali", can_connect=True),
             [],
-            PrometheusSourceError,
+            None,
+            pytest.raises(PrometheusSourceError),
         ),
     ],
 )
@@ -207,6 +210,7 @@ def test_kiali_config(
     container,
     relations,
     expected,
+    expected_context,
 ):
     """Test that the generated kiali configuration matches the expected output or raises the expected exception."""
     state = State(
@@ -214,16 +218,13 @@ def test_kiali_config(
         relations=relations,
         leader=True,
     )
-
     with this_charm_context(
         this_charm_context.on.config_changed(),
         state=state,
     ) as manager:
         charm: this_charm = manager.charm
-        # If we expect an exception, assert that it's raised.
-        if isinstance(expected, type) and issubclass(expected, Exception):
-            with pytest.raises(expected, match="No Prometheus sources available"):
-                _ = charm._generate_kiali_config()
-        else:
+        # Default value in case we raise an exception
+        kiali_config = None
+        with expected_context:
             kiali_config = charm._generate_kiali_config()
-            assert kiali_config == expected
+        assert kiali_config == expected
