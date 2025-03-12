@@ -47,6 +47,12 @@ requires:
     interface: grafana_datasource
   service-mesh:
     interface: service_mesh
+  tempo-datasource-exchange:
+    interface: grafana_datasource_exchange
+    # limit 1 because we support connecting to only 1 tempo
+    limit: 1
+    description: |
+      Integration to receive information about where Tempo is used as a datasource
   require-cmr-mesh:
     interface: cross_model_mesh
   logging:
