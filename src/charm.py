@@ -40,9 +40,6 @@ KIALI_PORT = 20001
 KIALI_PEBBLE_SERVICE_NAME = "kiali"
 PROMETHEUS_RELATION = "prometheus"
 
-# TODO: Required by the GrafanaSourceConsumer library, but barely used in this charm.  Can we remove it?
-PEER = "grafana"
-
 
 class KialiCharm(ops.CharmBase):
     """Charm for managing Kiali."""
@@ -249,12 +246,6 @@ class KialiCharm(ops.CharmBase):
             config = dict(self.model.config.items())
             self._parsed_config = CharmConfig(**config)  # pyright: ignore
         return self._parsed_config.model_dump(by_alias=True)
-
-    # TODO: Required by the GrafanaSourceConsumer library, but not used in this charm.  Can we remove it?
-    @property
-    def peers(self):
-        """Fetch the peer relation."""
-        return self.model.get_relation(PEER)
 
     @property
     def _prefix(self) -> str:
