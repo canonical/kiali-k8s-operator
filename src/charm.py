@@ -7,7 +7,7 @@
 
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 from urllib.parse import urlparse
 
 import ops
@@ -18,12 +18,12 @@ from charms.loki_k8s.v1.loki_push_api import LogForwarder
 from charms.mimir_coordinator_k8s.v0.prometheus_api import PrometheusApiRequirer
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
 from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
-from ops import Container, Port, StatusBase, pebble
+from observability_charm_tools.exceptions import BlockedStatusError, WaitingStatusError
+from observability_charm_tools.status_handling import StatusManager
+from ops import Container, Port, pebble
 from ops.pebble import Layer
 
 from charm_config import CharmConfig
-from exceptions import ConfigurationBlockingError, ConfigurationWaitingError
-from status_manager import get_first_worst_status
 from workload_config import (
     AuthConfig,
     DeploymentConfig,
@@ -86,46 +86,31 @@ class KialiCharm(ops.CharmBase):
 
     def reconcile(self, _event: ops.ConfigChangedEvent):
         """Reconcile the entire state of the charm."""
-        statuses: List[StatusBase] = []
+        status_manager = StatusManager()
 
-        try:
+        # Set a default value for any returns in the below context in case of an error
+        prometheus_url = None
+        with status_manager:
             prometheus_url = self._get_prometheus_source_url()
-        except ConfigurationBlockingError as e:
-            statuses.append(ops.BlockedStatus(str(e)))
-            prometheus_url = None
-        except ConfigurationWaitingError as e:
-            statuses.append(ops.WaitingStatus(str(e)))
-            prometheus_url = None
 
-        # prometheus and grafana config are required, but tempo is optional
-        try:
+        kiali_config = None
+        with status_manager:
             kiali_config = self._generate_kiali_config(prometheus_url=prometheus_url)
-        except ConfigurationBlockingError as e:
-            statuses.append(ops.BlockedStatus(str(e)))
-            kiali_config = None
 
-        try:
+        with status_manager:
             self._configure_kiali_workload(kiali_config)
-        except ConfigurationWaitingError as e:
-            statuses.append(ops.WaitingStatus(str(e)))
-        except ConfigurationBlockingError as e:
-            statuses.append(ops.BlockedStatus(str(e)))
 
-        if not _is_kiali_available(self._internal_url + self._prefix):
-            statuses.append(
-                ops.WaitingStatus(
-                    "Kiali workload is not available.  See other logs/statuses for reasons why.  If no other statuses"
-                    " are available, this may be transient."
-                )
-            )
+        with status_manager:
+            _is_kiali_available(self._internal_url + self._prefix)
 
-        if len(statuses) == 0:
-            statuses.append(ops.ActiveStatus())
+        if len(status_manager) == 0:
+            # Nothing broke, so we can be active
+            status_manager.statuses.append(ops.ActiveStatus())
 
         # TODO: Log all statuses
 
         # Set the unit to be the worst status
-        self.unit.status = get_first_worst_status(statuses)
+        self.unit.status = status_manager.worst()
 
     def _configure_kiali_workload(self, new_config):
         """Configure the Kiali workload, if possible, logging errors otherwise.
@@ -141,10 +126,10 @@ class KialiCharm(ops.CharmBase):
         name = "kiali"
         if not self._container.can_connect():
             LOGGER.debug(f"Container is not ready, cannot configure {name}")
-            raise ConfigurationWaitingError("Container is not ready, cannot configure Kiali")
+            raise WaitingStatusError("Container is not ready, cannot configure Kiali")
 
         if not new_config:
-            raise ConfigurationBlockingError("No configuration available for Kiali")
+            raise BlockedStatusError("No configuration available for Kiali")
 
         layer = self._generate_kiali_layer()
         new_config = yaml.dump(new_config)
@@ -163,9 +148,7 @@ class KialiCharm(ops.CharmBase):
     def _generate_kiali_config(self, prometheus_url: Optional[str]) -> dict:
         """Generate the Kiali configuration."""
         if not prometheus_url:
-            raise ConfigurationBlockingError(
-                "Cannot configure Kiali - no Prometheus url available"
-            )
+            raise BlockedStatusError("Cannot configure Kiali - no Prometheus url available")
 
         external_services = ExternalServicesConfig(prometheus=PrometheusConfig(url=prometheus_url))
 
@@ -232,13 +215,13 @@ class KialiCharm(ops.CharmBase):
         * prometheus's direct_url
 
         Raises:
-            ConfigurationBlockingError: If no Prometheus sources are available
-            ConfigurationWaitingError: If Prometheus sources are available, but the data is incomplete
+            BlockedStatusError: If no Prometheus sources are available
+            WaitingStatusError: If Prometheus sources are available, but the data is incomplete
         """
         if len(self._prometheus_source.relations) == 0:
-            raise ConfigurationBlockingError("Missing required relation to prometheus provider")
+            raise BlockedStatusError("Missing required relation to prometheus provider")
         if not (prometheus_data := self._prometheus_source.get_data()):
-            raise ConfigurationWaitingError(
+            raise WaitingStatusError(
                 "Prometheus relation established, but data is missing or invalid"
             )
         # Return ingress_url if not None, else direct_url
@@ -299,12 +282,17 @@ def _is_kiali_available(kiali_url):
     #  passing
     try:
         if requests.get(url=kiali_url).status_code != 200:
-            LOGGER.info(f"Kiali is not available at {kiali_url}")
-            return False
+            msg = (
+                f"Kiali is not available at {kiali_url}- see other logs/statuses for reasons why."
+                f"  If no other errors exist, this may be transient as the service starts."
+            )
+            raise WaitingStatusError(msg)
     except requests.exceptions.ConnectionError as e:
-        LOGGER.info(f"Kiali is not available at {kiali_url} - got error: {e}")
-        return False
-
+        msg = (
+            f"Kiali is not available at {kiali_url} - got connection error: {e}."
+            f"  If no other errors exist, this may be transient as the service starts."
+        )
+        raise WaitingStatusError(msg)
     return True
 
 
