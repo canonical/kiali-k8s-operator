@@ -44,7 +44,8 @@ peers:
 
 requires:
   prometheus:
-    interface: grafana_datasource
+    interface: prometheus_api
+    limit: 1
   service-mesh:
     interface: service_mesh
   require-cmr-mesh:

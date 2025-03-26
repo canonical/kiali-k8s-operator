@@ -13,9 +13,9 @@ from urllib.parse import urlparse
 import ops
 import requests
 import yaml
-from charms.grafana_k8s.v0.grafana_source import GrafanaSourceConsumer
 from charms.istio_beacon_k8s.v0.service_mesh import ServiceMeshConsumer
 from charms.loki_k8s.v1.loki_push_api import LogForwarder
+from charms.mimir_coordinator_k8s.v0.prometheus_api import PrometheusApiRequirer
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
 from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
 from ops import Container, Port, StatusBase, pebble
@@ -38,9 +38,7 @@ SOURCE_PATH = Path(__file__).parent
 KIALI_CONFIG_PATH = Path("/kiali-configuration/config.yaml")
 KIALI_PORT = 20001
 KIALI_PEBBLE_SERVICE_NAME = "kiali"
-
-# TODO: Required by the GrafanaSourceConsumer library, but barely used in this charm.  Can we remove it?
-PEER = "grafana"
+PROMETHEUS_RELATION = "prometheus"
 
 
 class KialiCharm(ops.CharmBase):
@@ -71,16 +69,9 @@ class KialiCharm(ops.CharmBase):
         self.framework.observe(self._ingress.on.revoked, self.reconcile)
 
         # Connection to prometheus/grafana-source integration
-        self._prometheus_source = GrafanaSourceConsumer(self, "prometheus")
-        self.framework.observe(
-            self._prometheus_source.on.sources_changed,  # pyright: ignore
-            self.reconcile,
-        )
-        # Not sure we need this, but kept it here for completeness.
-        self.framework.observe(
-            self._prometheus_source.on.sources_to_delete_changed,  # pyright: ignore
-            self.reconcile,
-        )
+        self._prometheus_source = PrometheusApiRequirer(self.model.relations, PROMETHEUS_RELATION)
+        self.framework.observe(self.on[PROMETHEUS_RELATION].relation_changed, self.reconcile)
+        self.framework.observe(self.on[PROMETHEUS_RELATION].relation_broken, self.reconcile)
 
         # Connection to the service mesh
         self._mesh = ServiceMeshConsumer(self)
@@ -224,18 +215,23 @@ class KialiCharm(ops.CharmBase):
     def _get_prometheus_source_url(self):
         """Get the Prometheus source configuration.
 
+        Returns, in this order, the first of:
+        * prometheus's ingress_url
+        * prometheus's direct_url
+
         Raises a SourceNotAvailableError if there are no sources or the data is not complete.
         """
-        if not (prometheus_sources := self._prometheus_source.sources):
-            raise PrometheusSourceError("No Prometheus sources available")
-        if len(prometheus_sources) > 1:
-            raise PrometheusSourceError("Multiple Prometheus sources available, expected only one")
-        if not (url := prometheus_sources[0].get("url", None)):
-            raise PrometheusSourceError("Prometheus source data is incomplete - url not available")
-        return url
+        if not len(self._prometheus_source.relations) == 1:
+            raise PrometheusSourceError("Missing required relation to prometheus provider")
+        if not (prometheus_data := self._prometheus_source.get_data()):
+            raise PrometheusSourceError(
+                "Prometheus relation established, but data is missing or invalid"
+            )
+        # Return ingress_url if not None, else direct_url
+        return str(prometheus_data.ingress_url or prometheus_data.direct_url)
 
     def _is_prometheus_source_available(self):
-        """Return True if the Prometheus source is available, else False."""
+        """Return True if Prometheus is available, else False."""
         try:
             self._get_prometheus_source_url()
             return True
@@ -251,12 +247,6 @@ class KialiCharm(ops.CharmBase):
             config = dict(self.model.config.items())
             self._parsed_config = CharmConfig(**config)  # pyright: ignore
         return self._parsed_config.model_dump(by_alias=True)
-
-    # TODO: Required by the GrafanaSourceConsumer library, but not used in this charm.  Can we remove it?
-    @property
-    def peers(self):
-        """Fetch the peer relation."""
-        return self.model.get_relation(PEER)
 
     @property
     def _prefix(self) -> str:

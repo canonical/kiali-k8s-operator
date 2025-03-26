@@ -85,7 +85,7 @@ async def test_deploy_dependencies(ops_test: OpsTest):
 async def test_add_relation_prometheus(ops_test: OpsTest):
     """Relate the charm_under_test to prometheus."""
     await ops_test.model.add_relation(
-        f"{APP_NAME}:prometheus", f"{PROMETHEUS_K8S.application_name}:grafana-source"
+        f"{APP_NAME}:prometheus", f"{PROMETHEUS_K8S.application_name}:prometheus-api"
     )
     await ops_test.model.wait_for_idle(apps=[APP_NAME], status="active", timeout=60)
 
