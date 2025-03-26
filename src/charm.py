@@ -7,7 +7,7 @@
 
 import logging
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from urllib.parse import urlparse
 
 import ops
@@ -22,6 +22,8 @@ from ops import Container, Port, StatusBase, pebble
 from ops.pebble import Layer
 
 from charm_config import CharmConfig
+from exceptions import ConfigurationBlockingError, ConfigurationWaitingError
+from status_manager import get_first_worst_status
 from workload_config import (
     AuthConfig,
     DeploymentConfig,
@@ -76,51 +78,54 @@ class KialiCharm(ops.CharmBase):
         # Connection to the service mesh
         self._mesh = ServiceMeshConsumer(self)
 
-        self.framework.observe(self.on.collect_unit_status, self.on_collect_status)
+        self.framework.observe(self.on.kiali_pebble_ready, self.reconcile)
         self.framework.observe(self.on.config_changed, self.reconcile)
 
         # Expose the Kiali workload through the service
         self.unit.set_ports(Port("tcp", KIALI_PORT))
 
-    def on_collect_status(self, e: ops.CollectStatusEvent):
-        """Collect and report the statuses of the charm."""
-        # TODO: Extract the generation of these statuses to a helper method, that way other parts of the charm can know
-        #  if the charm is active too.
+    def reconcile(self, _event: ops.ConfigChangedEvent):
+        """Reconcile the entire state of the charm."""
         statuses: List[StatusBase] = []
 
-        if not self._container.can_connect():
-            statuses.append(ops.WaitingStatus("Waiting for the Kiali container to be ready"))
+        try:
+            prometheus_url = self._get_prometheus_source_url()
+        except ConfigurationBlockingError as e:
+            statuses.append(ops.BlockedStatus(str(e)))
+            prometheus_url = None
+        except ConfigurationWaitingError as e:
+            statuses.append(ops.WaitingStatus(str(e)))
+            prometheus_url = None
 
-        if not (prometheus_source_available := self._is_prometheus_source_available()):
-            statuses.append(ops.BlockedStatus("Prometheus source is not available"))
+        # prometheus and grafana config are required, but tempo is optional
+        try:
+            kiali_config = self._generate_kiali_config(prometheus_url=prometheus_url)
+        except ConfigurationBlockingError as e:
+            statuses.append(ops.BlockedStatus(str(e)))
+            kiali_config = None
 
-        if prometheus_source_available:
-            # Only valid if we have a prometheus source
-            if not _is_kiali_available(self._internal_url + self._prefix):
-                statuses.append(
-                    ops.WaitingStatus(
-                        "Kiali is configured and container is ready, but Kiali's web server is not available"
-                    )
+        try:
+            self._configure_kiali_workload(kiali_config)
+        except ConfigurationWaitingError as e:
+            statuses.append(ops.WaitingStatus(str(e)))
+        except ConfigurationBlockingError as e:
+            statuses.append(ops.BlockedStatus(str(e)))
+
+        if not _is_kiali_available(self._internal_url + self._prefix):
+            statuses.append(
+                ops.WaitingStatus(
+                    "Kiali workload is not available.  See other logs/statuses for reasons why.  If no other statuses"
+                    " are available, this may be transient."
                 )
+            )
 
         if len(statuses) == 0:
             statuses.append(ops.ActiveStatus())
 
-        for status in statuses:
-            e.add_status(status)
+        # TODO: Log all statuses
 
-    def reconcile(self, _event: ops.ConfigChangedEvent):
-        """Reconcile the entire state of the charm."""
-        new_config = None
-        try:
-            new_config = self._generate_kiali_config()
-        except PrometheusSourceError as e:
-            LOGGER.warning(f"Failed to generate Kiali configuration, got error: {e}")
-            # TODO: actually shut down the service and remove the configuration
-            # LOGGER.warning(f"Shutting down {name} service and removing existing configuration")
-
-        if new_config:
-            self._configure_kiali_workload(new_config)
+        # Set the unit to be the worst status
+        self.unit.status = get_first_worst_status(statuses)
 
     def _configure_kiali_workload(self, new_config):
         """Configure the Kiali workload, if possible, logging errors otherwise.
@@ -136,7 +141,10 @@ class KialiCharm(ops.CharmBase):
         name = "kiali"
         if not self._container.can_connect():
             LOGGER.debug(f"Container is not ready, cannot configure {name}")
-            return
+            raise ConfigurationWaitingError("Container is not ready, cannot configure Kiali")
+
+        if not new_config:
+            raise ConfigurationBlockingError("No configuration available for Kiali")
 
         layer = self._generate_kiali_layer()
         new_config = yaml.dump(new_config)
@@ -152,9 +160,13 @@ class KialiCharm(ops.CharmBase):
             LOGGER.info(f"new config detected for {name}, restarting the service")
             self._container.restart(KIALI_PEBBLE_SERVICE_NAME)
 
-    def _generate_kiali_config(self) -> dict:
+    def _generate_kiali_config(self, prometheus_url: Optional[str]) -> dict:
         """Generate the Kiali configuration."""
-        prometheus_url = self._get_prometheus_source_url()
+        if not prometheus_url:
+            raise ConfigurationBlockingError(
+                "Cannot configure Kiali - no Prometheus url available"
+            )
+
         external_services = ExternalServicesConfig(prometheus=PrometheusConfig(url=prometheus_url))
 
         # TODO: implement _get_tempo_source_url()
@@ -212,19 +224,21 @@ class KialiCharm(ops.CharmBase):
             }
         )
 
-    def _get_prometheus_source_url(self):
+    def _get_prometheus_source_url(self) -> str:
         """Get the Prometheus source configuration.
 
         Returns, in this order, the first of:
         * prometheus's ingress_url
         * prometheus's direct_url
 
-        Raises a SourceNotAvailableError if there are no sources or the data is not complete.
+        Raises:
+            ConfigurationBlockingError: If no Prometheus sources are available
+            ConfigurationWaitingError: If Prometheus sources are available, but the data is incomplete
         """
-        if not len(self._prometheus_source.relations) == 1:
-            raise PrometheusSourceError("Missing required relation to prometheus provider")
+        if len(self._prometheus_source.relations) == 0:
+            raise ConfigurationBlockingError("Missing required relation to prometheus provider")
         if not (prometheus_data := self._prometheus_source.get_data()):
-            raise PrometheusSourceError(
+            raise ConfigurationWaitingError(
                 "Prometheus relation established, but data is missing or invalid"
             )
         # Return ingress_url if not None, else direct_url

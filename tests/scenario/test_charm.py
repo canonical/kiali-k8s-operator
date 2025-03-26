@@ -8,13 +8,13 @@ import pytest
 from ops import ActiveStatus, BlockedStatus, WaitingStatus
 from scenario import Container, Relation, State
 
-from charm import PrometheusSourceError
+from exceptions import ConfigurationBlockingError
 
 REMOTE_PROMETHEUS_APP_NAME = "grafana"
 REMOTE_PROMETHEUS_MODEL = "some-model"
 REMOTE_PROMETHEUS_MODEL_UUID = "1"
 REMOTE_PROMETHEUS_TYPE = "prometheus"
-REMOTE_PROMETHEUS_URL = "http://prometheus:9090/"
+REMOTE_PROMETHEUS_URL = "http://prometheus:9090"
 
 
 def mock_prometheus_relation() -> Relation:
@@ -86,14 +86,11 @@ def test_charm_given_inputs(
 
 
 @pytest.mark.parametrize(
-    "container, relations, expected, expected_context",
+    "prometheus_url, expected, expected_context",
     [
         (
             # Active: All inputs provided.
-            Container(name="kiali", can_connect=True),
-            [
-                mock_prometheus_relation(),
-            ],
+            "http://prometheus:9090",
             {
                 "auth": {"strategy": "anonymous"},
                 "deployment": {"view_only_mode": True},
@@ -105,34 +102,24 @@ def test_charm_given_inputs(
         ),
         (
             # Inactive: Missing Prometheus relation should raise an exception.
-            Container(name="kiali", can_connect=True),
-            [],
             None,
-            pytest.raises(PrometheusSourceError),
+            None,
+            pytest.raises(ConfigurationBlockingError),
         ),
     ],
 )
 def test_kiali_config(
     this_charm,
     this_charm_context,
-    container,
-    relations,
+    prometheus_url,
     expected,
     expected_context,
 ):
     """Test that the generated kiali configuration matches the expected output or raises the expected exception."""
-    state = State(
-        containers=[container],
-        relations=relations,
-        leader=True,
-    )
-    with this_charm_context(
-        this_charm_context.on.config_changed(),
-        state=state,
-    ) as manager:
+    with this_charm_context(this_charm_context.on.update_status(), state=State()) as manager:
         charm: this_charm = manager.charm
         # Default value in case we raise an exception
         kiali_config = None
         with expected_context:
-            kiali_config = charm._generate_kiali_config()
+            kiali_config = charm._generate_kiali_config(prometheus_url=prometheus_url)
         assert kiali_config == expected
