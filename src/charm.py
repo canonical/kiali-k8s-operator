@@ -71,6 +71,7 @@ class KialiCharm(ops.CharmBase):
         # Connection to prometheus/grafana-source integration
         self._prometheus_source = PrometheusApiRequirer(self.model.relations, PROMETHEUS_RELATION)
         self.framework.observe(self.on[PROMETHEUS_RELATION].relation_changed, self.reconcile)
+        self.framework.observe(self.on[PROMETHEUS_RELATION].relation_broken, self.reconcile)
 
         # Connection to the service mesh
         self._mesh = ServiceMeshConsumer(self)
