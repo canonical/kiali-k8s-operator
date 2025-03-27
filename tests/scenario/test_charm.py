@@ -2,13 +2,13 @@
 # Copyright 2024 Canonical Ltd.
 # See LICENSE file for licensing details.
 from contextlib import nullcontext as does_not_raise
+from typing import Optional
 from unittest.mock import patch
 
 import pytest
+from observability_charm_tools.exceptions import BlockedStatusError, WaitingStatusError
 from ops import ActiveStatus, BlockedStatus, WaitingStatus
 from scenario import Container, Relation, State
-
-from exceptions import ConfigurationBlockingError
 
 REMOTE_PROMETHEUS_APP_NAME = "grafana"
 REMOTE_PROMETHEUS_MODEL = "some-model"
@@ -29,8 +29,19 @@ def mock_prometheus_relation() -> Relation:
     )
 
 
+def mock_is_kiali_available(raises: Optional[Exception]):
+    """Return a mock for is_kiali_available that, when called, will either raise or return True."""
+
+    def f(*args, **kwargs):
+        if raises:
+            raise raises
+        return True
+
+    return f
+
+
 @pytest.mark.parametrize(
-    "container, relations, kiali_available, expected_status",
+    "container, relations, kiali_available_mock, expected_status",
     [
         (
             # Has all inputs - Active
@@ -38,7 +49,7 @@ def mock_prometheus_relation() -> Relation:
             [
                 mock_prometheus_relation(),
             ],
-            True,
+            mock_is_kiali_available(raises=None),
             ActiveStatus,
         ),
         (
@@ -47,14 +58,14 @@ def mock_prometheus_relation() -> Relation:
             [
                 mock_prometheus_relation(),
             ],
-            False,
+            mock_is_kiali_available(raises=WaitingStatusError("")),
             WaitingStatus,
         ),
         (
             # Inactive - prometheus relation not ready
             Container(name="kiali", can_connect=True),
             [],
-            False,
+            mock_is_kiali_available(raises=WaitingStatusError("")),
             BlockedStatus,
         ),
         (
@@ -63,13 +74,13 @@ def mock_prometheus_relation() -> Relation:
             [
                 mock_prometheus_relation(),
             ],
-            False,
+            mock_is_kiali_available(raises=WaitingStatusError("")),
             WaitingStatus,
         ),
     ],
 )
 def test_charm_given_inputs(
-    this_charm_context, container, relations, kiali_available, expected_status
+    this_charm_context, container, relations, kiali_available_mock, expected_status
 ):
     """Tests that the charm responds as expected to standard inputs."""
     # Arrange
@@ -79,7 +90,7 @@ def test_charm_given_inputs(
         leader=True,
     )
 
-    with patch("charm._is_kiali_available", lambda x: kiali_available):
+    with patch("charm._is_kiali_available", kiali_available_mock):
         out = this_charm_context.run(this_charm_context.on.config_changed(), state)
 
     assert isinstance(out.unit_status, expected_status)
@@ -104,7 +115,7 @@ def test_charm_given_inputs(
             # Inactive: Missing Prometheus relation should raise an exception.
             None,
             None,
-            pytest.raises(ConfigurationBlockingError),
+            pytest.raises(BlockedStatusError),
         ),
     ],
 )
