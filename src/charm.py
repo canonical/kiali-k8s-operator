@@ -103,10 +103,6 @@ class KialiCharm(ops.CharmBase):
         with status_manager:
             _is_kiali_available(self._internal_url + self._prefix)
 
-        if len(status_manager) == 0:
-            # Nothing broke, so we can be active
-            status_manager.statuses.append(ops.ActiveStatus())
-
         # TODO: Log all statuses
 
         # Set the unit to be the worst status
