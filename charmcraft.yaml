@@ -43,20 +43,23 @@ peers:
     interface: grafana_peers
 
 requires:
-  prometheus:
-    interface: prometheus_api
+  ingress:
+    interface: ingress
     limit: 1
-  service-mesh:
-    interface: service_mesh
-  require-cmr-mesh:
-    interface: cross_model_mesh
+  istio-metadata:
+    interface: istio_metadata
+    limit: 1
   logging:
     interface: loki_push_api
     description: |
       Receives Loki's push api endpoint address to push logs to, and forwards charm's built-in alert rules to Loki.
-  ingress:
-      interface: ingress
-      limit: 1
+  prometheus:
+    interface: prometheus_api
+    limit: 1
+  require-cmr-mesh:
+    interface: cross_model_mesh
+  service-mesh:
+    interface: service_mesh
 
 provides:
   provide-cmr-mesh:

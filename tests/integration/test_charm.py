@@ -82,11 +82,13 @@ async def test_deploy_dependencies(ops_test: OpsTest):
 
 @pytest.mark.setup
 @pytest.mark.abort_on_fail
-async def test_add_relation_prometheus(ops_test: OpsTest):
-    """Relate the charm_under_test to prometheus."""
+async def test_add_relations_to_dependencies(ops_test: OpsTest):
+    """Relate the charm_under_test to prometheus and istio-k8s."""
     await ops_test.model.add_relation(
         f"{APP_NAME}:prometheus", f"{PROMETHEUS_K8S.application_name}:prometheus-api"
     )
+    await ops_test.model.add_relation(f"{APP_NAME}:istio-metadata", ISTIO_K8S.application_name)
+
     await ops_test.model.wait_for_idle(apps=[APP_NAME], status="active", timeout=60)
 
 

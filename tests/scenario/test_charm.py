@@ -97,25 +97,34 @@ def test_charm_given_inputs(
 
 
 @pytest.mark.parametrize(
-    "prometheus_url, expected, expected_context",
+    "prometheus_url, istio_namespace, expected, expected_context",
     [
         (
             # Active: All inputs provided.
             "http://prometheus:9090",
+            "istio-namespace",
             {
                 "auth": {"strategy": "anonymous"},
                 "deployment": {"view_only_mode": True},
                 "external_services": {"prometheus": {"url": REMOTE_PROMETHEUS_URL}},
-                "istio_namespace": "istio-system",
+                "istio_namespace": "istio-namespace",
                 "server": {"port": 20001, "web_root": "/"},
             },
             does_not_raise(),
         ),
         (
-            # Inactive: Missing Prometheus relation should raise an exception.
+            # Inactive: Missing Prometheus data should raise an exception.
             None,
+            "istio-namespace",
             None,
             pytest.raises(BlockedStatusError),
+        ),
+        (
+                # Inactive: Missing istio namespace should raise an exception.
+                "http://prometheus:9090",
+                None,
+                None,
+                pytest.raises(BlockedStatusError),
         ),
     ],
 )
@@ -123,6 +132,7 @@ def test_kiali_config(
     this_charm,
     this_charm_context,
     prometheus_url,
+    istio_namespace,
     expected,
     expected_context,
 ):
@@ -132,5 +142,5 @@ def test_kiali_config(
         # Default value in case we raise an exception
         kiali_config = None
         with expected_context:
-            kiali_config = charm._generate_kiali_config(prometheus_url=prometheus_url)
+            kiali_config = charm._generate_kiali_config(prometheus_url=prometheus_url, istio_namespace=istio_namespace)
         assert kiali_config == expected
