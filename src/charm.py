@@ -14,6 +14,7 @@ import ops
 import requests
 import yaml
 from charms.istio_beacon_k8s.v0.service_mesh import ServiceMeshConsumer
+from charms.istio_k8s.v0.istio_metadata import IstioMetadataRequirer
 from charms.loki_k8s.v1.loki_push_api import LogForwarder
 from charms.mimir_coordinator_k8s.v0.prometheus_api import PrometheusApiRequirer
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
@@ -40,6 +41,7 @@ SOURCE_PATH = Path(__file__).parent
 KIALI_CONFIG_PATH = Path("/kiali-configuration/config.yaml")
 KIALI_PORT = 20001
 KIALI_PEBBLE_SERVICE_NAME = "kiali"
+ISTIO_RELATION = "istio-metadata"
 PROMETHEUS_RELATION = "prometheus"
 
 
@@ -78,6 +80,11 @@ class KialiCharm(ops.CharmBase):
         # Connection to the service mesh
         self._mesh = ServiceMeshConsumer(self)
 
+        # Connection to istio-k8s
+        self._istio_metadata = IstioMetadataRequirer(self.model.relations, ISTIO_RELATION)
+        self.framework.observe(self.on[ISTIO_RELATION].relation_changed, self.reconcile)
+        self.framework.observe(self.on[ISTIO_RELATION].relation_broken, self.reconcile)
+
         self.framework.observe(self.on.kiali_pebble_ready, self.reconcile)
         self.framework.observe(self.on.config_changed, self.reconcile)
 
@@ -93,9 +100,15 @@ class KialiCharm(ops.CharmBase):
         with status_manager:
             prometheus_url = self._get_prometheus_source_url()
 
+        istio_namespace = None
+        with status_manager:
+            istio_namespace = self._get_istio_namespace()
+
         kiali_config = None
         with status_manager:
-            kiali_config = self._generate_kiali_config(prometheus_url=prometheus_url)
+            kiali_config = self._generate_kiali_config(
+                prometheus_url=prometheus_url, istio_namespace=istio_namespace
+            )
 
         with status_manager:
             self._configure_kiali_workload(kiali_config)
@@ -141,10 +154,15 @@ class KialiCharm(ops.CharmBase):
             LOGGER.info(f"new config detected for {name}, restarting the service")
             self._container.restart(KIALI_PEBBLE_SERVICE_NAME)
 
-    def _generate_kiali_config(self, prometheus_url: Optional[str]) -> dict:
+    def _generate_kiali_config(
+        self, prometheus_url: Optional[str], istio_namespace: Optional[str]
+    ) -> dict:
         """Generate the Kiali configuration."""
         if not prometheus_url:
             raise BlockedStatusError("Cannot configure Kiali - no Prometheus url available")
+
+        if not istio_namespace:
+            raise BlockedStatusError("Cannot configure Kiali - no related istio available")
 
         external_services = ExternalServicesConfig(prometheus=PrometheusConfig(url=prometheus_url))
 
@@ -177,8 +195,7 @@ class KialiCharm(ops.CharmBase):
             auth=AuthConfig(strategy="anonymous"),
             deployment=DeploymentConfig(view_only_mode=self.parsed_config["view-only-mode"]),
             external_services=external_services,
-            # TODO: Use the actual istio namespace (https://github.com/canonical/kiali-k8s-operator/issues/4)
-            istio_namespace="istio-system",
+            istio_namespace=istio_namespace,
             server=ServerConfig(port=KIALI_PORT, web_root=self._prefix),
         )
         return kiali_config.model_dump(exclude_none=True)
@@ -202,6 +219,19 @@ class KialiCharm(ops.CharmBase):
                 },
             }
         )
+
+    def _get_istio_namespace(self) -> str:
+        """Get the istio namespace configuration.
+
+        Raises:
+            BlockedStatusError: If no istio relation is available
+            WaitingStatusError: If the istio relation is available, but the data is incomplete
+        """
+        if len(self._istio_metadata.relations) == 0:
+            raise BlockedStatusError("Missing required relation to istio provider")
+        if not (istio_data := self._istio_metadata.get_data()):
+            raise WaitingStatusError("Istio relation established, but data is missing or invalid")
+        return istio_data.root_namespace
 
     def _get_prometheus_source_url(self) -> str:
         """Get the Prometheus source configuration.
