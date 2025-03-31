@@ -110,6 +110,7 @@ class KialiCharm(ops.CharmBase):
 
     def reconcile(self, _event: ops.ConfigChangedEvent):
         """Reconcile the entire state of the charm."""
+        LOGGER.debug("Reconciling Kiali charm")
         status_manager = StatusManager()
 
         # Set a default value for any returns in the below context in case of an error
@@ -161,12 +162,14 @@ class KialiCharm(ops.CharmBase):
         Args:
             new_config: The new configuration to push to the Kiali workload.
         """
+        LOGGER.debug("Configuring Kiali workload")
         name = "kiali"
         if not self._container.can_connect():
             LOGGER.debug(f"Container is not ready, cannot configure {name}")
             raise WaitingStatusError("Container is not ready, cannot configure Kiali")
 
         if not new_config:
+            LOGGER.debug("No new_config provided.  raising Blocked StatusError.")
             raise BlockedStatusError("No configuration available for Kiali")
 
         layer = self._generate_kiali_layer()
@@ -191,6 +194,7 @@ class KialiCharm(ops.CharmBase):
         grafana_external_url: Optional[str],
     ) -> dict:
         """Generate the Kiali configuration."""
+        LOGGER.debug("Generating Kiali configuration")
         if not prometheus_url:
             raise BlockedStatusError("Cannot configure Kiali - no Prometheus url available")
 
@@ -236,13 +240,17 @@ class KialiCharm(ops.CharmBase):
             istio_namespace=istio_namespace,
             server=ServerConfig(port=KIALI_PORT, web_root=self._prefix),
         )
-        return kiali_config.model_dump(exclude_none=True)
+
+        returned = kiali_config.model_dump(exclude_none=True)
+        LOGGER.debug(f"Kiali configuration: {returned}")
+        return returned
 
     @staticmethod
     def _generate_kiali_layer() -> Layer:
         """Generate the Kiali layer."""
         # TODO: Add pebble checks?
-        return Layer(
+        LOGGER.debug("Generating Kiali layer")
+        layer = Layer(
             {
                 "summary": "Kiali",
                 "description": "The Kiali dashboard for Istio",
@@ -257,6 +265,8 @@ class KialiCharm(ops.CharmBase):
                 },
             }
         )
+        LOGGER.debug(f"Kiali layer: {layer}")
+        return layer
 
     def _get_grafana_urls(self) -> GrafanaUrls:
         """Return the urls for the related Grafana.
@@ -294,11 +304,14 @@ class KialiCharm(ops.CharmBase):
             BlockedStatusError: If no istio relation is available
             WaitingStatusError: If the istio relation is available, but the data is incomplete
         """
+        LOGGER.debug("Getting Istio namespace")
         if len(self._istio_metadata.relations) == 0:
             raise BlockedStatusError("Missing required relation to istio provider")
         if not (istio_data := self._istio_metadata.get_data()):
             raise WaitingStatusError("Istio relation established, but data is missing or invalid")
-        return istio_data.root_namespace
+        returned = istio_data.root_namespace
+        LOGGER.debug(f"Istio namespace: {returned}")
+        return returned
 
     def _get_prometheus_source_url(self) -> str:
         """Get the Prometheus source configuration.
@@ -311,6 +324,7 @@ class KialiCharm(ops.CharmBase):
             BlockedStatusError: If no Prometheus sources are available
             WaitingStatusError: If Prometheus sources are available, but the data is incomplete
         """
+        LOGGER.debug("Getting Prometheus source URL")
         if len(self._prometheus_source.relations) == 0:
             raise BlockedStatusError("Missing required relation to prometheus provider")
         if not (prometheus_data := self._prometheus_source.get_data()):
@@ -318,7 +332,9 @@ class KialiCharm(ops.CharmBase):
                 "Prometheus relation established, but data is missing or invalid"
             )
         # Return ingress_url if not None, else direct_url
-        return str(prometheus_data.ingress_url or prometheus_data.direct_url)
+        returned = str(prometheus_data.ingress_url or prometheus_data.direct_url)
+        LOGGER.debug(f"Prometheus source URL: {returned}")
+        return returned
 
     def _is_prometheus_source_available(self):
         """Return True if Prometheus is available, else False."""
@@ -357,7 +373,9 @@ def _is_container_file_equal_to(container: Container, filename: str, file_conten
 
     Returns False if the container is not accessible, the file does not exist, or the contents do not match.
     """
+    LOGGER.debug(f"Checking if {filename} in container is equal to passed contents")
     if not container.can_connect():
+        LOGGER.debug(f"Container is not ready, cannot check {filename}")
         return False
 
     try:
@@ -366,7 +384,9 @@ def _is_container_file_equal_to(container: Container, filename: str, file_conten
         LOGGER.warning(f"Could not check {filename} - got error while retrieving the file: {e}")
         return False
 
-    return current_contents == file_contents
+    returned = current_contents == file_contents
+    LOGGER.debug(f"Result of current_contents == file_contents: {returned}")
+    return returned
 
 
 def _is_kiali_available(kiali_url):
