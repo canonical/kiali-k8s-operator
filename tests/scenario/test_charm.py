@@ -15,6 +15,8 @@ REMOTE_PROMETHEUS_MODEL = "some-model"
 REMOTE_PROMETHEUS_MODEL_UUID = "1"
 REMOTE_PROMETHEUS_TYPE = "prometheus"
 REMOTE_PROMETHEUS_URL = "http://prometheus:9090"
+REMOTE_ISTIO_APP_NAME = "istio"
+REMOTE_ISTIO_NAMESPACE = "istio-model"
 
 
 def mock_prometheus_relation() -> Relation:
@@ -25,6 +27,18 @@ def mock_prometheus_relation() -> Relation:
         remote_app_name=REMOTE_PROMETHEUS_APP_NAME,
         remote_app_data={
             "direct_url": REMOTE_PROMETHEUS_URL,
+        },
+    )
+
+
+def mock_istio_metadata_relation() -> Relation:
+    """Return a mock relation for istio-metadata."""
+    return Relation(
+        endpoint="istio-metadata",
+        interface="istio_metadata",
+        remote_app_name=REMOTE_ISTIO_APP_NAME,
+        remote_app_data={
+            "root_namespace": REMOTE_ISTIO_NAMESPACE,
         },
     )
 
@@ -48,6 +62,7 @@ def mock_is_kiali_available(raises: Optional[Exception]):
             Container(name="kiali", can_connect=True),
             [
                 mock_prometheus_relation(),
+                mock_istio_metadata_relation(),
             ],
             mock_is_kiali_available(raises=None),
             ActiveStatus,
@@ -57,6 +72,7 @@ def mock_is_kiali_available(raises: Optional[Exception]):
             Container(name="kiali", can_connect=False),
             [
                 mock_prometheus_relation(),
+                mock_istio_metadata_relation(),
             ],
             mock_is_kiali_available(raises=WaitingStatusError("")),
             WaitingStatus,
@@ -64,7 +80,18 @@ def mock_is_kiali_available(raises: Optional[Exception]):
         (
             # Inactive - prometheus relation not ready
             Container(name="kiali", can_connect=True),
-            [],
+            [
+                mock_istio_metadata_relation(),
+            ],
+            mock_is_kiali_available(raises=WaitingStatusError("")),
+            BlockedStatus,
+        ),
+        (
+            # Inactive - istio-metadata relation not ready
+            Container(name="kiali", can_connect=True),
+            [
+                mock_istio_metadata_relation(),
+            ],
             mock_is_kiali_available(raises=WaitingStatusError("")),
             BlockedStatus,
         ),
@@ -73,6 +100,7 @@ def mock_is_kiali_available(raises: Optional[Exception]):
             Container(name="kiali", can_connect=True),
             [
                 mock_prometheus_relation(),
+                mock_istio_metadata_relation(),
             ],
             mock_is_kiali_available(raises=WaitingStatusError("")),
             WaitingStatus,
@@ -97,22 +125,31 @@ def test_charm_given_inputs(
 
 
 @pytest.mark.parametrize(
-    "prometheus_url, expected, expected_context",
+    "prometheus_url, istio_namespace, expected, expected_context",
     [
         (
             # Active: All inputs provided.
             "http://prometheus:9090",
+            "istio-namespace",
             {
                 "auth": {"strategy": "anonymous"},
                 "deployment": {"view_only_mode": True},
                 "external_services": {"prometheus": {"url": REMOTE_PROMETHEUS_URL}},
-                "istio_namespace": "istio-system",
+                "istio_namespace": "istio-namespace",
                 "server": {"port": 20001, "web_root": "/"},
             },
             does_not_raise(),
         ),
         (
-            # Inactive: Missing Prometheus relation should raise an exception.
+            # Inactive: Missing Prometheus data should raise an exception.
+            None,
+            "istio-namespace",
+            None,
+            pytest.raises(BlockedStatusError),
+        ),
+        (
+            # Inactive: Missing istio namespace should raise an exception.
+            "http://prometheus:9090",
             None,
             None,
             pytest.raises(BlockedStatusError),
@@ -123,6 +160,7 @@ def test_kiali_config(
     this_charm,
     this_charm_context,
     prometheus_url,
+    istio_namespace,
     expected,
     expected_context,
 ):
@@ -130,7 +168,9 @@ def test_kiali_config(
     with this_charm_context(this_charm_context.on.update_status(), state=State()) as manager:
         charm: this_charm = manager.charm
         # Default value in case we raise an exception
-        kiali_config = None
         with expected_context:
-            kiali_config = charm._generate_kiali_config(prometheus_url=prometheus_url)
-        assert kiali_config == expected
+            kiali_config = charm._generate_kiali_config(
+                prometheus_url=prometheus_url, istio_namespace=istio_namespace
+            )
+            # If above doesn't raise, compare output
+            assert kiali_config == expected
