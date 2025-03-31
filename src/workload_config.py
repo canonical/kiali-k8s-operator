@@ -58,7 +58,9 @@ class GrafanaConfig(BaseModel):
     """Configuration for Grafana service."""
 
     enabled: bool = False
-    external_url: Optional[str] = None
+    # This is used by Kiali to present links to the user.  It should be accessible to the user.
+    internal_url: str
+    external_url: str
 
 
 class ExternalServicesConfig(BaseModel):

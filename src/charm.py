@@ -7,12 +7,13 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TypedDict
 from urllib.parse import urlparse
 
 import ops
 import requests
 import yaml
+from charms.grafana_k8s.v0.grafana_metadata import GrafanaMetadataRequirer
 from charms.istio_beacon_k8s.v0.service_mesh import ServiceMeshConsumer
 from charms.istio_k8s.v0.istio_metadata import IstioMetadataRequirer
 from charms.loki_k8s.v1.loki_push_api import LogForwarder
@@ -29,6 +30,7 @@ from workload_config import (
     AuthConfig,
     DeploymentConfig,
     ExternalServicesConfig,
+    GrafanaConfig,
     KialiConfigSpec,
     PrometheusConfig,
     ServerConfig,
@@ -43,6 +45,14 @@ KIALI_PORT = 20001
 KIALI_PEBBLE_SERVICE_NAME = "kiali"
 ISTIO_RELATION = "istio-metadata"
 PROMETHEUS_RELATION = "prometheus"
+GRAFANA_RELATION = "grafana-metadata"
+
+
+class GrafanaUrls(TypedDict):
+    """A dictionary of Grafana URLs."""
+
+    internal_url: str
+    external_url: str
 
 
 class KialiCharm(ops.CharmBase):
@@ -91,6 +101,13 @@ class KialiCharm(ops.CharmBase):
         # Expose the Kiali workload through the service
         self.unit.set_ports(Port("tcp", KIALI_PORT))
 
+        # Connection to the Grafana used for deep dives into the metrics from Kiali
+        self._grafana_metadata = GrafanaMetadataRequirer(
+            relation_mapping=self.model.relations, relation_name=GRAFANA_RELATION
+        )
+        self.framework.observe(self.on[GRAFANA_RELATION].relation_changed, self.reconcile)
+        self.framework.observe(self.on[GRAFANA_RELATION].relation_broken, self.reconcile)
+
     def reconcile(self, _event: ops.ConfigChangedEvent):
         """Reconcile the entire state of the charm."""
         status_manager = StatusManager()
@@ -104,10 +121,22 @@ class KialiCharm(ops.CharmBase):
         with status_manager:
             istio_namespace = self._get_istio_namespace()
 
+        try:
+            grafana_urls = self._get_grafana_urls()
+            grafana_internal_url = grafana_urls["internal_url"]
+            grafana_external_url = grafana_urls["external_url"]
+        except BlockedStatusError:
+            grafana_internal_url = None
+            grafana_external_url = None
+            LOGGER.info("Grafana integration disabled - no grafana relation found.")
+
         kiali_config = None
         with status_manager:
             kiali_config = self._generate_kiali_config(
-                prometheus_url=prometheus_url, istio_namespace=istio_namespace
+                prometheus_url=prometheus_url,
+                istio_namespace=istio_namespace,
+                grafana_internal_url=grafana_internal_url,
+                grafana_external_url=grafana_external_url,
             )
 
         with status_manager:
@@ -155,7 +184,11 @@ class KialiCharm(ops.CharmBase):
             self._container.restart(KIALI_PEBBLE_SERVICE_NAME)
 
     def _generate_kiali_config(
-        self, prometheus_url: Optional[str], istio_namespace: Optional[str]
+        self,
+        prometheus_url: Optional[str],
+        istio_namespace: Optional[str],
+        grafana_internal_url: Optional[str],
+        grafana_external_url: Optional[str],
     ) -> dict:
         """Generate the Kiali configuration."""
         if not prometheus_url:
@@ -183,13 +216,18 @@ class KialiCharm(ops.CharmBase):
         # ),
         # )
 
-        # TODO:implement _get_grafana_source_url()
-        # grafana_url = self._get_grafana_source_url()
-        # if grafana_url:
-        # external_services.grafana = GrafanaConfig(
-        #     enabled=True,
-        #     external_url=grafana_url,
-        # )
+        if grafana_internal_url and grafana_external_url:
+            LOGGER.info(
+                "Grafana integration only works when connected to unauthenticated grafana instances."
+            )
+            # Kiali doesn't accept trailing slashes on grafana urls
+            grafana_internal_url = grafana_internal_url.rstrip("/")
+            grafana_external_url = grafana_external_url.rstrip("/")
+            external_services.grafana = GrafanaConfig(
+                enabled=True,
+                internal_url=grafana_internal_url,
+                external_url=grafana_external_url,
+            )
 
         kiali_config = KialiConfigSpec(
             auth=AuthConfig(strategy="anonymous"),
@@ -219,6 +257,35 @@ class KialiCharm(ops.CharmBase):
                 },
             }
         )
+
+    def _get_grafana_urls(self) -> GrafanaUrls:
+        """Return the urls for the related Grafana.
+
+        This retrieves the grafana urls from the grafana-metadata relation, returning:
+        * internal_url: GrafanaMetadataAppData.direct_url
+        * external_url: GrafanaMetadataAppData.ingress_url
+
+        If GrafanaMetadataAppData.ingress_url is not available, it will default to GrafanaMetadataAppData.direct_url.
+
+        Raises:
+          ConfigurationBlockingError: If no grafana is related to this application
+          ConfigurationWaitingError: If a grafana is related to this application, but its data is incomplete.
+        """
+        LOGGER.debug("Getting Grafana configuration")
+        if len(self._grafana_metadata.relations) == 0:
+            raise BlockedStatusError("No grafana available over the grafana-metadata relation")
+
+        grafana_metadata = self._grafana_metadata.get_data()
+        if not grafana_metadata:
+            raise BlockedStatusError("Waiting on data over the grafana-metadata relation")
+
+        urls = GrafanaUrls(
+            internal_url=str(grafana_metadata.direct_url),
+            external_url=str(grafana_metadata.ingress_url or grafana_metadata.direct_url),
+        )
+
+        LOGGER.debug(f"Grafana urls: {urls}")
+        return urls
 
     def _get_istio_namespace(self) -> str:
         """Get the istio namespace configuration.
