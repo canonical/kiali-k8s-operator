@@ -122,14 +122,17 @@ class KialiCharm(ops.CharmBase):
         with status_manager:
             istio_namespace = self._get_istio_namespace()
 
-        try:
-            grafana_urls = self._get_grafana_urls()
-            grafana_internal_url = grafana_urls["internal_url"]
-            grafana_external_url = grafana_urls["external_url"]
-        except BlockedStatusError:
-            grafana_internal_url = None
-            grafana_external_url = None
-            LOGGER.info("Grafana integration disabled - no grafana relation found.")
+        with status_manager:
+            try:
+                grafana_urls = self._get_grafana_urls()
+                grafana_internal_url = grafana_urls["internal_url"]
+                grafana_external_url = grafana_urls["external_url"]
+            except BlockedStatusError:
+                # Grafana integration is optional for the charm.  If the relation is Blocked (eg: does not exist) the
+                # charm will log and ignore it.  But if the relation is Waiting, we catch the status normally.
+                grafana_internal_url = None
+                grafana_external_url = None
+                LOGGER.info("Grafana integration disabled - no grafana relation found.")
 
         kiali_config = None
         with status_manager:
@@ -287,7 +290,7 @@ class KialiCharm(ops.CharmBase):
 
         grafana_metadata = self._grafana_metadata.get_data()
         if not grafana_metadata:
-            raise BlockedStatusError("Waiting on data over the grafana-metadata relation")
+            raise WaitingStatusError("Waiting on data over the grafana-metadata relation")
 
         urls = GrafanaUrls(
             internal_url=str(grafana_metadata.direct_url),
