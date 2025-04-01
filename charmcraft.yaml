@@ -43,6 +43,9 @@ peers:
     interface: grafana_peers
 
 requires:
+  grafana-metadata:
+    interface: grafana_metadata
+    limit: 1
   ingress:
     interface: ingress
     limit: 1
