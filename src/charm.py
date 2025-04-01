@@ -127,7 +127,7 @@ class KialiCharm(ops.CharmBase):
                 grafana_urls = self._get_grafana_urls()
                 grafana_internal_url = grafana_urls["internal_url"]
                 grafana_external_url = grafana_urls["external_url"]
-            except BlockedStatusError:
+            except GrafanaMissingError:
                 # Grafana integration is optional for the charm.  If the relation is Blocked (eg: does not exist) the
                 # charm will log and ignore it.  But if the relation is Waiting, we catch the status normally.
                 grafana_internal_url = None
@@ -281,12 +281,12 @@ class KialiCharm(ops.CharmBase):
         If GrafanaMetadataAppData.ingress_url is not available, it will default to GrafanaMetadataAppData.direct_url.
 
         Raises:
-          ConfigurationBlockingError: If no grafana is related to this application
-          ConfigurationWaitingError: If a grafana is related to this application, but its data is incomplete.
+          GrafanaMissingError: If no grafana is related to this application
+          WaitingStatusError: If a grafana is related to this application, but its data is incomplete.
         """
         LOGGER.debug("Getting Grafana configuration")
         if len(self._grafana_metadata.relations) == 0:
-            raise BlockedStatusError("No grafana available over the grafana-metadata relation")
+            raise GrafanaMissingError("No grafana available over the grafana-metadata relation")
 
         grafana_metadata = self._grafana_metadata.get_data()
         if not grafana_metadata:
@@ -414,6 +414,12 @@ def _is_kiali_available(kiali_url):
 
 class PrometheusSourceError(Exception):
     """Raised when the Prometheus data is not available."""
+
+    pass
+
+
+class GrafanaMissingError(Exception):
+    """Raised when the Grafana data is not available."""
 
     pass
 
