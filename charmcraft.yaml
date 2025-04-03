@@ -96,4 +96,4 @@ resources:
   kiali-image:
     type: oci-image
     description: Kiali OCI image
-    upstream-source: quay.io/kiali/kiali:v2.2.0
+    upstream-source: quay.io/kiali/kiali:v2.7.1
