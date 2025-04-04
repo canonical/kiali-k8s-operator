@@ -63,6 +63,9 @@ requires:
     interface: cross_model_mesh
   service-mesh:
     interface: service_mesh
+  tempo-api:
+    interface: tempo_api
+    limit: 1
 
 provides:
   provide-cmr-mesh:
@@ -71,6 +74,12 @@ provides:
     interface: prometheus_scrape
     description: |
       Exposes the Prometheus metrics endpoint providing telemetry about the Kiali instance
+  tempo-datasource-exchange:
+    interface: grafana_datasource_exchange
+    # limit 1 because we support connecting to only 1 tempo
+    limit: 1
+    description: |
+      Integration to receive information about where Tempo is used as a datasource
 
 config:
   options:

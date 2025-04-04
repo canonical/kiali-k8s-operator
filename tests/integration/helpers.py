@@ -3,6 +3,7 @@
 import logging
 import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
 
@@ -11,6 +12,38 @@ import yaml
 from lightkube.resources.core_v1 import Service
 
 logger = logging.getLogger(__name__)
+
+app_metadata = yaml.safe_load(Path("./charmcraft.yaml").read_text())
+KIALI_NAME = app_metadata["name"]
+kiali_resources = {
+    "kiali-image": app_metadata["resources"]["kiali-image"]["upstream-source"],
+}
+
+
+@dataclass
+class CharmDeploymentConfiguration:
+    entity_url: str  # aka charm name or local path to charm
+    application_name: str
+    channel: str
+    trust: bool
+    config: Optional[dict] = None
+
+
+ISTIO_K8S = CharmDeploymentConfiguration(
+    entity_url="istio-k8s", application_name="istio-k8s", channel="latest/edge", trust=True
+)
+ISTIO_INGRESS_K8S = CharmDeploymentConfiguration(
+    entity_url="istio-ingress-k8s",
+    application_name="istio-ingress-k8s",
+    channel="latest/edge",
+    trust=True,
+)
+PROMETHEUS_K8S = CharmDeploymentConfiguration(
+    entity_url="prometheus-k8s",
+    application_name="prometheus-k8s",
+    channel="latest/edge",
+    trust=True,
+)
 
 
 def build_charm(
