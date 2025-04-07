@@ -372,7 +372,9 @@ class KialiCharm(ops.CharmBase):
         LOGGER.debug(f"Prometheus source URL: {returned}")
         return returned
 
-    def _get_tempo_configuration(self, grafana_uid: Optional[str]) -> Optional[TempoConfigurationData]:
+    def _get_tempo_configuration(
+        self, grafana_uid: Optional[str]
+    ) -> Optional[TempoConfigurationData]:
         """Return configuration data for the related Tempo.
 
         This returns only the http api from tempo, not the grpc api, because Kiali only supports http.  If ingress_url
