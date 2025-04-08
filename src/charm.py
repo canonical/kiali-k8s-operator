@@ -13,13 +13,15 @@ from urllib.parse import urlparse
 import ops
 import requests
 import yaml
-from charms.grafana_k8s.v0.grafana_metadata import GrafanaMetadataRequirer
+from charms.grafana_k8s.v0.grafana_metadata import GrafanaMetadataAppData, GrafanaMetadataRequirer
 from charms.istio_beacon_k8s.v0.service_mesh import ServiceMeshConsumer
 from charms.istio_k8s.v0.istio_metadata import IstioMetadataRequirer
 from charms.loki_k8s.v1.loki_push_api import LogForwarder
 from charms.mimir_coordinator_k8s.v0.prometheus_api import PrometheusApiRequirer
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
+from charms.tempo_coordinator_k8s.v0.tempo_api import TempoApiAppData, TempoApiRequirer
 from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
+from cosl.interfaces.datasource_exchange import DatasourceExchange
 from observability_charm_tools.exceptions import BlockedStatusError, WaitingStatusError
 from observability_charm_tools.status_handling import StatusManager
 from ops import Container, Port, pebble
@@ -34,6 +36,8 @@ from workload_config import (
     KialiConfigSpec,
     PrometheusConfig,
     ServerConfig,
+    TracingConfig,
+    TracingTempoConfig,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -46,6 +50,8 @@ KIALI_PEBBLE_SERVICE_NAME = "kiali"
 ISTIO_RELATION = "istio-metadata"
 PROMETHEUS_RELATION = "prometheus"
 GRAFANA_RELATION = "grafana-metadata"
+TEMPO_API_RELATION = "tempo-api"
+TEMPO_DATASOURCE_EXCHANGE_RELATION = "tempo-datasource-exchange"
 
 
 class GrafanaUrls(TypedDict):
@@ -53,6 +59,14 @@ class GrafanaUrls(TypedDict):
 
     internal_url: str
     external_url: str
+
+
+class TempoConfigurationData(TypedDict):
+    """The configuration data for the Tempo datasource in Kiali."""
+
+    datasource_uid: str
+    external_url: str
+    internal_url: str
 
 
 class KialiCharm(ops.CharmBase):
@@ -108,6 +122,24 @@ class KialiCharm(ops.CharmBase):
         self.framework.observe(self.on[GRAFANA_RELATION].relation_changed, self.reconcile)
         self.framework.observe(self.on[GRAFANA_RELATION].relation_broken, self.reconcile)
 
+        # Integrating Tempo as a datasource for Kiali
+        self._tempo_api = TempoApiRequirer(
+            relation_mapping=self.model.relations, relation_name=TEMPO_API_RELATION
+        )
+        self.framework.observe(self.on[TEMPO_API_RELATION].relation_changed, self.reconcile)
+        self.framework.observe(self.on[TEMPO_API_RELATION].relation_broken, self.reconcile)
+        self._tempo_datasource_exchange = DatasourceExchange(
+            charm=self,
+            provider_endpoint=TEMPO_DATASOURCE_EXCHANGE_RELATION,
+            requirer_endpoint=None,
+        )
+        self.framework.observe(
+            self.on[TEMPO_DATASOURCE_EXCHANGE_RELATION].relation_changed, self.reconcile
+        )
+        self.framework.observe(
+            self.on[TEMPO_DATASOURCE_EXCHANGE_RELATION].relation_broken, self.reconcile
+        )
+
     def reconcile(self, _event: ops.ConfigChangedEvent):
         """Reconcile the entire state of the charm."""
         LOGGER.debug("Reconciling Kiali charm")
@@ -122,17 +154,23 @@ class KialiCharm(ops.CharmBase):
         with status_manager:
             istio_namespace = self._get_istio_namespace()
 
+        grafana_internal_url = None
+        grafana_external_url = None
+        grafana_uid = None
         with status_manager:
             try:
-                grafana_urls = self._get_grafana_urls()
-                grafana_internal_url = grafana_urls["internal_url"]
-                grafana_external_url = grafana_urls["external_url"]
+                grafana_metadata = self._get_grafana_metadata()
+                grafana_internal_url = str(grafana_metadata.direct_url)
+                grafana_external_url = str(grafana_metadata.ingress_url)
+                grafana_uid = grafana_metadata.grafana_uid
             except GrafanaMissingError:
                 # Grafana integration is optional for the charm.  If the relation is Blocked (eg: does not exist) the
                 # charm will log and ignore it.  But if the relation is Waiting, we catch the status normally.
-                grafana_internal_url = None
-                grafana_external_url = None
                 LOGGER.info("Grafana integration disabled - no grafana relation found.")
+
+        tempo_configuration = None
+        with status_manager:
+            tempo_configuration = self._get_tempo_configuration(grafana_uid=grafana_uid)
 
         kiali_config = None
         with status_manager:
@@ -141,6 +179,7 @@ class KialiCharm(ops.CharmBase):
                 istio_namespace=istio_namespace,
                 grafana_internal_url=grafana_internal_url,
                 grafana_external_url=grafana_external_url,
+                tempo_configuration=tempo_configuration,
             )
 
         with status_manager:
@@ -195,6 +234,7 @@ class KialiCharm(ops.CharmBase):
         istio_namespace: Optional[str],
         grafana_internal_url: Optional[str],
         grafana_external_url: Optional[str],
+        tempo_configuration: Optional[TempoConfigurationData],
     ) -> dict:
         """Generate the Kiali configuration."""
         LOGGER.debug("Generating Kiali configuration")
@@ -205,23 +245,6 @@ class KialiCharm(ops.CharmBase):
             raise BlockedStatusError("Cannot configure Kiali - no related istio available")
 
         external_services = ExternalServicesConfig(prometheus=PrometheusConfig(url=prometheus_url))
-
-        # TODO: implement _get_tempo_source_url()
-        # tempo_url = self._get_tempo_source_url()
-        # if tempo_url:
-        #     external_services.tracing = TracingConfig(
-        #         enabled=True,
-        #         internal_url=tempo_url,
-        #         use_grpc=True,
-        #         external_url=tempo_url,
-        #         grpc_port=9096,
-        # TODO: work on below functionality when we figure out how to get tempo's grafana source uid
-        # tempo_config=TracingTempoConfig(
-        #     org_id="1",
-        #     datasource_uid=self._get_tempo_source_uid(),
-        #     url_format="grafana",
-        # ),
-        # )
 
         if grafana_internal_url and grafana_external_url:
             LOGGER.info(
@@ -234,6 +257,18 @@ class KialiCharm(ops.CharmBase):
                 enabled=True,
                 internal_url=grafana_internal_url,
                 external_url=grafana_external_url,
+            )
+
+        if tempo_configuration:
+            external_services.tracing = TracingConfig(
+                enabled=True,
+                internal_url=tempo_configuration["internal_url"],
+                external_url=tempo_configuration["external_url"],
+                tempo_config=TracingTempoConfig(
+                    org_id="1",
+                    datasource_uid=tempo_configuration["datasource_uid"],
+                    url_format="grafana",
+                ),
             )
 
         kiali_config = KialiConfigSpec(
@@ -271,14 +306,10 @@ class KialiCharm(ops.CharmBase):
         LOGGER.debug(f"Kiali layer: {layer}")
         return layer
 
-    def _get_grafana_urls(self) -> GrafanaUrls:
-        """Return the urls for the related Grafana.
+    def _get_grafana_metadata(self) -> GrafanaMetadataAppData:
+        """Return the metadata for the related Grafana.
 
-        This retrieves the grafana urls from the grafana-metadata relation, returning:
-        * internal_url: GrafanaMetadataAppData.direct_url
-        * external_url: GrafanaMetadataAppData.ingress_url
-
-        If GrafanaMetadataAppData.ingress_url is not available, it will default to GrafanaMetadataAppData.direct_url.
+        If ingress_url is not available, we default it to the direct_url.
 
         Raises:
           GrafanaMissingError: If no grafana is related to this application
@@ -292,13 +323,15 @@ class KialiCharm(ops.CharmBase):
         if not grafana_metadata:
             raise WaitingStatusError("Waiting on data over the grafana-metadata relation")
 
-        urls = GrafanaUrls(
-            internal_url=str(grafana_metadata.direct_url),
-            external_url=str(grafana_metadata.ingress_url or grafana_metadata.direct_url),
+        # Create the return object, including a default value for ingress_url
+        grafana_metadata = GrafanaMetadataAppData(
+            direct_url=grafana_metadata.direct_url,
+            ingress_url=grafana_metadata.ingress_url or grafana_metadata.direct_url,
+            grafana_uid=grafana_metadata.grafana_uid,
         )
 
-        LOGGER.debug(f"Grafana urls: {urls}")
-        return urls
+        LOGGER.debug(f"Grafana metadata: {grafana_metadata}")
+        return grafana_metadata
 
     def _get_istio_namespace(self) -> str:
         """Get the istio namespace configuration.
@@ -338,6 +371,90 @@ class KialiCharm(ops.CharmBase):
         returned = str(prometheus_data.ingress_url or prometheus_data.direct_url)
         LOGGER.debug(f"Prometheus source URL: {returned}")
         return returned
+
+    def _get_tempo_configuration(
+        self, grafana_uid: Optional[str]
+    ) -> Optional[TempoConfigurationData]:
+        """Return configuration data for the related Tempo.
+
+        This returns only the http api from tempo, not the grpc api, because Kiali only supports http.  If ingress_url
+        is not available, we default it to the direct_url.
+
+        Returns None if we are not related to a tempo.
+
+        Raises:
+          TempoMissingError: If no tempo is related to this application
+          BlockedStatusError: If a tempo is related to this application, but something else that is required is missing.
+          ConfigurationWaitingError: If a Tempo is related to this application, but its data sent from tempo or other
+                                     required relations is incomplete.
+        """
+        try:
+            tempo_metadata = self._get_tempo_api()
+        except TempoMissingError:
+            return None
+
+        tempo_datasource_uid = self._get_tempo_datasource_uid(grafana_uid=grafana_uid)
+
+        return TempoConfigurationData(
+            internal_url=str(tempo_metadata.http.direct_url).rstrip("/"),
+            external_url=str(
+                tempo_metadata.http.ingress_url or tempo_metadata.http.direct_url
+            ).rstrip("/"),
+            datasource_uid=tempo_datasource_uid,
+        )
+
+    def _get_tempo_api(self) -> TempoApiAppData:
+        """Get the Tempo api urls (internal and external).
+
+        Raises:
+            ConfigurationWaitingError: If a Tempo is related to this application, but its data is incomplete.
+        """
+        if len(self._tempo_api.relations) == 0:
+            raise TempoMissingError("No tempo available over the tempo-api relation")
+
+        tempo_metadata = self._tempo_api.get_data()
+        if not tempo_metadata:
+            raise WaitingStatusError("Waiting on related tempo application's metadata")
+
+        return tempo_metadata
+
+    def _get_tempo_datasource_uid(self, grafana_uid: Optional[str]) -> str:
+        """Get the Tempo datasource uid.
+
+        Returns the first related datasource that is a tempo datasource and has the same grafana uid as the known
+        grafana.
+
+        Will raise:
+          ConfigurationBlockingError: If no applications are related, or applications are related but have sent only
+                                       non-tempo datasources
+          ConfigurationWaitingError: If a datasource is related, but has not yet provided data
+        """
+        if len(self.model.relations.get(TEMPO_DATASOURCE_EXCHANGE_RELATION, ())) == 0:
+            raise BlockedStatusError(
+                f"No tempo datasource available over the {TEMPO_DATASOURCE_EXCHANGE_RELATION} relation"
+            )
+
+        tempo_datasources = [
+            datasource
+            for datasource in self._tempo_datasource_exchange.received_datasources
+            if datasource.type == "tempo"
+        ]
+        if len(tempo_datasources) == 0:
+            WaitingStatusError("Tempo datasource relation exists, but no data has been provided")
+
+        if not grafana_uid:
+            raise BlockedStatusError(
+                "Tempo datasource relation exists, but no grafana metadata is available.  Add a relation to Grafana on"
+                " grafana-metadata unblock."
+            )
+
+        for datasource in tempo_datasources:
+            if datasource.grafana_uid == grafana_uid:
+                return datasource.uid
+        raise BlockedStatusError(
+            "Tempo datasources exist, but none match the related Grafana.  Check the that the "
+            "grafana-metadata relation is related to the same Grafana as Tempo."
+        )
 
     def _is_prometheus_source_available(self):
         """Return True if Prometheus is available, else False."""
@@ -419,6 +536,12 @@ class PrometheusSourceError(Exception):
 
 
 class GrafanaMissingError(Exception):
+    """Raised when the Grafana data is not available."""
+
+    pass
+
+
+class TempoMissingError(Exception):
     """Raised when the Grafana data is not available."""
 
     pass
