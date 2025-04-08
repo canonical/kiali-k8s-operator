@@ -129,9 +129,7 @@ async def test_kiali_is_available(ops_test: OpsTest):
 #   tox -e integration -- --model kiali tests/integration/test_tempo_integration.py
 #   juju add-model bookinfo
 #   juju deploy istio-beacon-k8s --trust --channel edge --config model-on-mesh=true
-#   # TODO: Link below is pinned to release-1.25 because the default branch has a non-woke name that fails our woke
-#   #  linter... and we cannot add an ignore check to our woke linter :/  Feel free to use the default branch locally.
-#   kubectl -n bookinfo apply -f https://raw.githubusercontent.com/istio/istio/refs/heads/release-1.25/samples/bookinfo/platform/kube/bookinfo.yaml
+#   kubectl -n bookinfo apply -f https://raw.githubusercontent.com/istio/istio/refs/heads/master/samples/bookinfo/platform/kube/bookinfo.yaml
 #   # Generate traffic:
 #   while true; do kubectl -n bookinfo exec "$(kubectl -n bookinfo get pod -l app=ratings -o jsonpath='{.items[0].metadata.name}')" -c ratings -- curl -sS grafana-on-mesh:3000  | grep -o "<title>.*</title>"; sleep 1; done
 #   # Check in the Kiali dashboard for traces to the bookinfo app
