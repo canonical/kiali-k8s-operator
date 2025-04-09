@@ -1,7 +1,6 @@
 # Contributing
 ![GitHub License](https://img.shields.io/github/license/canonical/kiali-k8s-operator)
 ![GitHub Commit Activity](https://img.shields.io/github/commit-activity/y/canonical/kiali-k8s-operator)
-![GitHub Lines of Code](https://img.shields.io/tokei/lines/github/canonical/kiali-k8s-operator)
 ![GitHub Issues](https://img.shields.io/github/issues/canonical/kiali-k8s-operator)
 ![GitHub PRs](https://img.shields.io/github/issues-pr/canonical/kiali-k8s-operator)
 ![GitHub Contributors](https://img.shields.io/github/contributors/canonical/kiali-k8s-operator)
