@@ -8,6 +8,12 @@ summary: A Juju charm to operate Kiali
 description: |
   Kiali is a dashboard for Istio, providing visualization and control of your service mesh.
 
+links:
+  documentation: https://discourse.charmhub.io/t/kiali-index/17247
+  website: https://charmhub.io/kiali-k8s
+  source: https://github.com/canonical/kiali-k8s-operator
+  issues: https://github.com/canonical/kiali-k8s-operator/issues
+
 assumes:
   - k8s-api
 
