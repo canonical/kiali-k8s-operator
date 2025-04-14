@@ -44,7 +44,7 @@ KIALI_CONFIG_PATH = Path("/kiali-configuration/config.yaml")
 KIALI_PORT = 20001
 KIALI_PEBBLE_SERVICE_NAME = "kiali"
 ISTIO_RELATION = "istio-metadata"
-PROMETHEUS_RELATION = "prometheus"
+PROMETHEUS_RELATION = "prometheus-api"
 GRAFANA_RELATION = "grafana-metadata"
 
 

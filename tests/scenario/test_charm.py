@@ -42,7 +42,7 @@ def mock_grafana_relation(
 def mock_prometheus_relation(direct_url=REMOTE_PROMETHEUS_URL) -> Relation:
     """Return a mock relation to prometheus."""
     return Relation(
-        endpoint="prometheus",
+        endpoint="prometheus-api",
         interface="prometheus_api",
         remote_app_name="prometheus",
         remote_app_data={
