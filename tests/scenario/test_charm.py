@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Copyright 2024 Canonical Ltd.
 # See LICENSE file for licensing details.
+import json
 from contextlib import nullcontext as does_not_raise
 from typing import Optional
 from unittest.mock import MagicMock, patch
@@ -10,7 +11,7 @@ from observability_charm_tools.exceptions import BlockedStatusError, WaitingStat
 from ops import ActiveStatus, BlockedStatus, WaitingStatus
 from scenario import Container, Relation, State
 
-from charm import KialiCharm
+from charm import KialiCharm, TempoConfigurationData
 
 REMOTE_PROMETHEUS_MODEL = "some-model"
 REMOTE_PROMETHEUS_MODEL_UUID = "1"
@@ -21,6 +22,12 @@ REMOTE_ISTIO_NAMESPACE = "istio-model"
 GRAFANA_INTERNAL_URL = "http://grafana:3000/"
 GRAFANA_EXTERNAL_URL = "http://grafana.example.com/"
 GRAFANA_UID = "grafana-uid"
+TEMPO_CONFIGURATION = TempoConfigurationData(
+    datasource_uid="tempo-datasource-uid",
+    internal_url="http://tempo:16686",
+    external_url="http://tempo.example.com",
+)
+REMOTE_TEMPO_URL = "http://tempo:16686"
 
 
 def mock_grafana_relation(
@@ -59,6 +66,34 @@ def mock_istio_metadata_relation(root_namespace=REMOTE_ISTIO_NAMESPACE) -> Relat
         remote_app_name="istio",
         remote_app_data={
             "root_namespace": root_namespace,
+        },
+    )
+
+
+def mock_tempo_api_relation(direct_url=REMOTE_TEMPO_URL) -> Relation:
+    """Return a mock relation for tempo-api."""
+    return Relation(
+        endpoint="tempo-api",
+        interface="tempo-api",
+        remote_app_name="tempo",
+        remote_app_data={
+            "http": json.dumps({"direct_url": direct_url}),
+            # Required, but not used in this test
+            "grpc": json.dumps({"direct_url": "http://unused.com"}),
+        },
+    )
+
+
+def mock_tempo_datasource_exchange() -> Relation:
+    """Return a mock relation for tempo-datasource-exchange."""
+    return Relation(
+        endpoint="tempo-datasource-exchange",
+        interface="grafana-datasource-exchange",
+        remote_app_name="tempo",
+        remote_app_data={
+            "datasources": json.dumps(
+                [{"type": "tempo", "uid": "tempo-datasource-uid", "grafana_uid": GRAFANA_UID}]
+            )
         },
     )
 
@@ -145,7 +180,7 @@ def test_charm_given_inputs(
 
 
 @pytest.mark.parametrize(
-    "prometheus_url, istio_namespace, grafana_internal_url, grafana_external_url, expected, expected_context",
+    "prometheus_url, istio_namespace, grafana_internal_url, grafana_external_url, tempo_configuration, expected, expected_context",
     [
         (
             # Active: All inputs provided.
@@ -155,6 +190,7 @@ def test_charm_given_inputs(
             # slashes
             GRAFANA_INTERNAL_URL,
             GRAFANA_EXTERNAL_URL,
+            TEMPO_CONFIGURATION,
             {
                 "auth": {"strategy": "anonymous"},
                 "deployment": {"view_only_mode": True},
@@ -165,6 +201,18 @@ def test_charm_given_inputs(
                         "internal_url": GRAFANA_INTERNAL_URL.rstrip("/"),
                         "external_url": GRAFANA_EXTERNAL_URL.rstrip("/"),
                     },
+                    "tracing": {
+                        "enabled": True,
+                        "internal_url": TEMPO_CONFIGURATION["internal_url"],
+                        "external_url": TEMPO_CONFIGURATION["external_url"],
+                        "provider": "tempo",
+                        "tempo_config": {
+                            "org_id": "1",
+                            "datasource_uid": TEMPO_CONFIGURATION["datasource_uid"],
+                            "url_format": "grafana",
+                        },
+                        "use_grpc": False,
+                    },
                 },
                 "istio_namespace": REMOTE_ISTIO_NAMESPACE,
                 "server": {"port": 20001, "web_root": "/"},
@@ -172,9 +220,10 @@ def test_charm_given_inputs(
             does_not_raise(),
         ),
         (
-            # Active: All inputs except optional grafana provided.
+            # Active: All inputs except optional grafana and tempo provided.
             REMOTE_PROMETHEUS_URL,
             REMOTE_ISTIO_NAMESPACE,
+            None,
             None,
             None,
             {
@@ -195,6 +244,7 @@ def test_charm_given_inputs(
             None,
             None,
             None,
+            None,
             pytest.raises(BlockedStatusError),
         ),
         (
@@ -204,9 +254,11 @@ def test_charm_given_inputs(
             None,
             None,
             None,
+            None,
             pytest.raises(BlockedStatusError),
         ),
     ],
+    # TODO: case with tracing
 )
 def test_kiali_config(
     this_charm,
@@ -215,6 +267,7 @@ def test_kiali_config(
     istio_namespace,
     grafana_internal_url,
     grafana_external_url,
+    tempo_configuration,
     expected,
     expected_context,
 ):
@@ -228,38 +281,65 @@ def test_kiali_config(
                 istio_namespace=istio_namespace,
                 grafana_internal_url=grafana_internal_url,
                 grafana_external_url=grafana_external_url,
+                tempo_configuration=tempo_configuration,
             )
             # If above doesn't raise, compare output
             assert kiali_config == expected
 
 
 @pytest.mark.parametrize(
-    "prometheus_relation, istio_metadata_relation, grafana_metadata_relation",
+    "prometheus_relation, istio_metadata_relation, grafana_metadata_relation, tempo_api_relation, tempo_datasource_exchange_relation",
     [
+        # Prometheus and istio-metadata relations only
         (
             mock_prometheus_relation(direct_url=REMOTE_PROMETHEUS_URL),
             mock_istio_metadata_relation(root_namespace=REMOTE_ISTIO_NAMESPACE),
             None,
+            None,
+            None,
         ),
+        # Prometheus, istio-metadata, and grafana relations
         (
             mock_prometheus_relation(direct_url=REMOTE_PROMETHEUS_URL),
             mock_istio_metadata_relation(root_namespace=REMOTE_ISTIO_NAMESPACE),
             mock_grafana_relation(
                 internal_url=GRAFANA_INTERNAL_URL, external_url=GRAFANA_EXTERNAL_URL
             ),
+            None,
+            None,
+        ),
+        # Prometheus, istio-metadata, grafana relations, and both tempo relations
+        (
+            mock_prometheus_relation(direct_url=REMOTE_PROMETHEUS_URL),
+            mock_istio_metadata_relation(root_namespace=REMOTE_ISTIO_NAMESPACE),
+            mock_grafana_relation(
+                internal_url=GRAFANA_INTERNAL_URL, external_url=GRAFANA_EXTERNAL_URL
+            ),
+            mock_tempo_api_relation(direct_url=REMOTE_TEMPO_URL),
+            mock_tempo_datasource_exchange(),
         ),
     ],
 )
 def test_e2e_charm_configuration(
-    this_charm_context, prometheus_relation, istio_metadata_relation, grafana_metadata_relation
+    this_charm_context,
+    prometheus_relation,
+    istio_metadata_relation,
+    grafana_metadata_relation,
+    tempo_api_relation,
+    tempo_datasource_exchange_relation,
 ):
-    """An end-to-end spot test confirming configuration is correctly passed from relations to _generate_kiali_config."""
+    """An end-to-end spot test confirming configuration is correctly passed from relations to _generate_kiali_config.
+
+    This test is meant to confirm relation data that contributes to Kiali's configuration is correctly reaching the
+    _generate_kaili_config method.
+    """
     # Arrange
     relations = []
     prometheus_url_expected = None
     istio_namespace_expected = None
     grafana_internal_url_expected = None
     grafana_external_url_expected = None
+    tempo_configuration = None
 
     if prometheus_relation:
         relations.append(prometheus_relation)
@@ -270,8 +350,27 @@ def test_e2e_charm_configuration(
     if grafana_metadata_relation:
         relations.append(grafana_metadata_relation)
         # remove the trailing slash, as we intentionally strip it out to keep Kiali happy
-        grafana_internal_url_expected = grafana_metadata_relation.remote_app_data["direct_url"]
-        grafana_external_url_expected = grafana_metadata_relation.remote_app_data["ingress_url"]
+        grafana_internal_url_expected = str(
+            grafana_metadata_relation.remote_app_data["direct_url"]
+        )
+        grafana_external_url_expected = str(
+            grafana_metadata_relation.remote_app_data["ingress_url"]
+        )
+    if tempo_api_relation and tempo_datasource_exchange_relation:
+        relations.append(tempo_api_relation)
+        relations.append(tempo_datasource_exchange_relation)
+        internal_url = json.loads(tempo_api_relation.remote_app_data["http"])["direct_url"]
+        external_url = (
+            json.loads(tempo_api_relation.remote_app_data["http"]).get("ingress_url", None)
+            or internal_url
+        )
+        tempo_configuration = TempoConfigurationData(
+            internal_url=internal_url,
+            external_url=external_url,
+            datasource_uid=json.loads(
+                tempo_datasource_exchange_relation.remote_app_data["datasources"]
+            )[0]["uid"],
+        )
 
     state = State(
         containers=[
@@ -296,4 +395,5 @@ def test_e2e_charm_configuration(
             istio_namespace=istio_namespace_expected,
             grafana_internal_url=grafana_internal_url_expected,
             grafana_external_url=grafana_external_url_expected,
+            tempo_configuration=tempo_configuration,
         )
