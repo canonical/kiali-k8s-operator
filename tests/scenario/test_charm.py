@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from observability_charm_tools.exceptions import BlockedStatusError, WaitingStatusError
 from ops import ActiveStatus, BlockedStatus, WaitingStatus
+from ops.pebble import Layer
 from scenario import Container, Relation, State
 
 from charm import KialiCharm, TempoConfigurationData
@@ -134,7 +135,11 @@ def mock_is_kiali_available(raises: Optional[Exception]):
         ),
         (
             # Inactive - prometheus relation not ready
-            Container(name="kiali", can_connect=True),
+            Container(
+                name="kiali",
+                can_connect=True,
+                layers={"kiali": Layer({"services": {"kiali": {"summary": "kiali"}}})},
+            ),
             [
                 mock_istio_metadata_relation(),
             ],
@@ -143,7 +148,11 @@ def mock_is_kiali_available(raises: Optional[Exception]):
         ),
         (
             # Inactive - istio-metadata relation not ready
-            Container(name="kiali", can_connect=True),
+            Container(
+                name="kiali",
+                can_connect=True,
+                layers={"kiali": Layer({"services": {"kiali": {"summary": "kiali"}}})},
+            ),
             [
                 mock_istio_metadata_relation(),
             ],

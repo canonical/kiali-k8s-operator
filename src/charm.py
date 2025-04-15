@@ -211,7 +211,14 @@ class KialiCharm(ops.CharmBase):
             raise WaitingStatusError("Container is not ready, cannot configure Kiali")
 
         if not new_config:
-            LOGGER.debug("No new_config provided.  raising Blocked StatusError.")
+            try:
+                self._container.stop(KIALI_PEBBLE_SERVICE_NAME)
+            except ops.pebble.APIError:
+                # Layer likely doesn't exist yet.  Ignoring
+                pass
+            LOGGER.debug(
+                "No new_config provided.  Stopping the container and raising Blocked StatusError."
+            )
             raise BlockedStatusError("No configuration available for Kiali")
 
         layer = self._generate_kiali_layer()
