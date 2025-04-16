@@ -202,7 +202,8 @@ class KialiCharm(ops.CharmBase):
         error.  To confirm if Kiali is working, check the status of the Kiali workload directly.
 
         Args:
-            new_config: The new configuration to push to the Kiali workload.
+            new_config: The new configuration to push to the Kiali workload.  If None, the Kiali workload will be
+                        stopped if it is currently running.
         """
         LOGGER.debug("Configuring Kiali workload")
         name = "kiali"
@@ -212,14 +213,15 @@ class KialiCharm(ops.CharmBase):
 
         if not new_config:
             try:
+                self._container.get_service(KIALI_PEBBLE_SERVICE_NAME)
                 self._container.stop(KIALI_PEBBLE_SERVICE_NAME)
-            except ops.pebble.APIError:
-                # Layer likely doesn't exist yet.  Ignoring
+            except ops.model.ModelError:
+                # Service does not exist, so no need to stop it
                 pass
-            LOGGER.debug(
-                "No new_config provided.  Stopping the container and raising Blocked StatusError."
+            LOGGER.info(
+                f"No new_config provided.  Stopping the {KIALI_PEBBLE_SERVICE_NAME} service if it is running."
             )
-            raise BlockedStatusError("No configuration available for Kiali")
+            return
 
         layer = self._generate_kiali_layer()
         new_config = yaml.dump(new_config)
