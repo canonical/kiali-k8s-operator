@@ -56,7 +56,7 @@ async def test_deploy_required_dependencies(ops_test: OpsTest):
 async def test_add_relations_to_required_dependencies(ops_test: OpsTest):
     """Relate the charm_under_test to prometheus and istio-k8s."""
     await ops_test.model.add_relation(
-        f"{APP_NAME}:prometheus-api", f"{PROMETHEUS_K8S.application_name}:prometheus-api"
+        f"{KIALI_NAME}:prometheus-api", f"{PROMETHEUS_K8S.application_name}:prometheus-api"
     )
     await ops_test.model.add_relation(f"{KIALI_NAME}:istio-metadata", ISTIO_K8S.application_name)
 
@@ -107,6 +107,6 @@ async def test_ingress_is_available(ops_test: OpsTest):
 async def test_remove_relation_prometheus(ops_test: OpsTest):
     """Assert charm is blocked when we remove the prometheus relation."""
     await ops_test.model.applications[PROMETHEUS_K8S.application_name].remove_relation(
-        f"{APP_NAME}:prometheus-api", PROMETHEUS_K8S.application_name
+        f"{KIALI_NAME}:prometheus-api", PROMETHEUS_K8S.application_name
     )
     await ops_test.model.wait_for_idle(apps=[KIALI_NAME], status="blocked", timeout=1000)
