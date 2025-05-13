@@ -5,13 +5,15 @@ import os
 from pathlib import Path
 
 import pytest
-from helpers import build_charm
+from pytest_operator.plugin import OpsTest
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="session")
-def charm_under_test():
+def charm_under_test(ops_test: OpsTest):
     if charm_file := os.environ.get("CHARM_PATH"):
         return Path(charm_file)
-    return build_charm(charm_root_path="./", from_environment_variable="KIALI_CHARM")
+
+    return await ops_test.build_charm(".", verbosity="debug")
+
