@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="session")
-def charm_under_test(ops_test: OpsTest):
+async def charm_under_test(ops_test: OpsTest):
     if charm_file := os.environ.get("CHARM_PATH"):
         return Path(charm_file)
 
