@@ -1,5 +1,0 @@
-cosl
-observability-charm-tools @ git+https://github.com/canonical/observability-charm-tools@main
-ops
-pydantic
-requests

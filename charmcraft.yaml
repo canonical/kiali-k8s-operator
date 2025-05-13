@@ -17,23 +17,9 @@ links:
 assumes:
   - k8s-api
 
-bases:
-  - build-on:
-    - name: ubuntu
-      channel: "22.04"
-      architectures: ["amd64"]
-    run-on:
-    - name: ubuntu
-      channel: "22.04"
-      architectures: ["amd64"]
-  - build-on:
-    - name: ubuntu
-      channel: "22.04"
-      architectures: ["arm64"]
-    run-on:
-    - name: ubuntu
-      channel: "22.04"
-      architectures: ["arm64"]
+platforms:
+  ubuntu@22.04:amd64:
+  ubuntu@22.04:arm64:
 
 charm-libs:
   - lib: "grafana_k8s.grafana_source"
@@ -99,13 +85,13 @@ config:
 
 parts:
   charm:
-    plugin: charm
+    plugin: uv
     # include rustc and cargo to compile pydantic
     build-packages: [git, rustc, cargo]
-    charm-binary-python-packages:
-    - "pydantic>=2"
-    - "cryptography"
-    - "jsonschema"
+    build-snaps: [astral-uv]
+    override-build: |
+      craftctl default
+      git describe --always > $CRAFT_PART_INSTALL/version
 
 resources:
   kiali-image:
