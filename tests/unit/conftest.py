@@ -4,6 +4,10 @@
 from unittest.mock import patch
 
 import pytest
+from charms.tempo_coordinator_k8s.v0.tempo_api import TempoApiRequirer
+from scenario import Context
+
+from charm import KialiCharm as ThisCharm
 
 
 @pytest.fixture(autouse=True)
@@ -18,3 +22,15 @@ def mock_requests_get(request):
         with patch("charm.requests.get") as mock_requests_get:
             mock_requests_get.return_value.status_code = 200
             yield mock_requests_get
+
+
+@pytest.fixture(scope="function")
+def this_charm():
+    with patch.object(TempoApiRequirer, "_validate_relation_metadata", return_value=None):
+        # This validation step always fails in CI because it checks a metadata.yaml and we don't have one.
+        yield ThisCharm
+
+
+@pytest.fixture(scope="function")
+def this_charm_context(this_charm):
+    yield Context(charm_type=this_charm)

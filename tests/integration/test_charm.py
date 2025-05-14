@@ -79,7 +79,7 @@ async def test_kiali_is_available(ops_test: OpsTest):
 @pytest.mark.abort_on_fail
 async def test_ingress_relation(ops_test: OpsTest):
     """Relate kiali to istio-ingress."""
-    await ops_test.model.add_relation(ISTIO_INGRESS_K8S.application_name, KIALI_NAME)
+    await ops_test.model.add_relation(f"{ISTIO_INGRESS_K8S.application_name}:ingress", KIALI_NAME)
 
     await ops_test.model.wait_for_idle(
         apps=[ISTIO_INGRESS_K8S.application_name, KIALI_NAME],
