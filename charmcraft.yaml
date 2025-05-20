@@ -30,7 +30,7 @@ containers:
     resource: kiali-image
 
 peers:
-  # TODO: Can we remove this?  Required for the grafana_datasource lib, but not for features we use.
+  # TODO: Can we remove this?  Required for the grafana_datasource lib, but not for features we use
   grafana:
     interface: grafana_peers
 
