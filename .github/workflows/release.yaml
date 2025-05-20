@@ -12,3 +12,5 @@ jobs:
     secrets: inherit
     with:
       build-for-arm: true
+      default-track: 1
+
