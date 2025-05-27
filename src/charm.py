@@ -111,6 +111,7 @@ class KialiCharm(ops.CharmBase):
 
         self.framework.observe(self.on.kiali_pebble_ready, self.reconcile)
         self.framework.observe(self.on.config_changed, self.reconcile)
+        self.framework.observe(self.on.start, self.reconcile)
 
         # Expose the Kiali workload through the service
         self.unit.set_ports(Port("tcp", KIALI_PORT))
