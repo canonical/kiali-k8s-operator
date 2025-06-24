@@ -15,21 +15,21 @@ from tests.integration.helpers import CharmDeploymentConfiguration
 TEMPO_COORDINATOR_K8S = CharmDeploymentConfiguration(
     entity_url="tempo-coordinator-k8s",
     application_name="tempo-coordinator-k8s",
-    channel="latest/edge",
+    channel="2/edge",
     trust=True,
 )
 
 TEMPO_WORKER_K8S = CharmDeploymentConfiguration(
     entity_url="tempo-worker-k8s",
     application_name="tempo-worker-k8s",
-    channel="latest/edge",
+    channel="2/edge",
     trust=True,
 )
 
 S3_INTEGRATOR = CharmDeploymentConfiguration(
     entity_url="s3-integrator",
     application_name="s3-integrator",
-    channel="latest/edge",
+    channel="2/edge",
     trust=False,
 )
 
