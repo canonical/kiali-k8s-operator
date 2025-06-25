@@ -29,7 +29,7 @@ TEMPO_NAME = TEMPO_COORDINATOR_K8S.application_name
 GRAFANA_K8S = CharmDeploymentConfiguration(
     entity_url="grafana-k8s",
     application_name="grafana-k8s",
-    channel="latest/edge",
+    channel="2/edge",
     trust=True,
     config={
         "allow_anonymous_access": "true",
