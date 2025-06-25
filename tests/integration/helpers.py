@@ -28,18 +28,18 @@ class CharmDeploymentConfiguration:
 
 
 ISTIO_K8S = CharmDeploymentConfiguration(
-    entity_url="istio-k8s", application_name="istio-k8s", channel="latest/edge", trust=True
+    entity_url="istio-k8s", application_name="istio-k8s", channel="1/edge", trust=True
 )
 ISTIO_INGRESS_K8S = CharmDeploymentConfiguration(
     entity_url="istio-ingress-k8s",
     application_name="istio-ingress-k8s",
-    channel="latest/edge",
+    channel="1/edge",
     trust=True,
 )
 PROMETHEUS_K8S = CharmDeploymentConfiguration(
     entity_url="prometheus-k8s",
     application_name="prometheus-k8s",
-    channel="latest/edge",
+    channel="1/edge",
     trust=True,
 )
 
