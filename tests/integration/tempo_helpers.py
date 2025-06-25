@@ -15,14 +15,14 @@ from tests.integration.helpers import CharmDeploymentConfiguration
 TEMPO_COORDINATOR_K8S = CharmDeploymentConfiguration(
     entity_url="tempo-coordinator-k8s",
     application_name="tempo-coordinator-k8s",
-    channel="1/edge",
+    channel="2/edge",
     trust=True,
 )
 
 TEMPO_WORKER_K8S = CharmDeploymentConfiguration(
     entity_url="tempo-worker-k8s",
     application_name="tempo-worker-k8s",
-    channel="1/edge",
+    channel="2/edge",
     trust=True,
 )
 
