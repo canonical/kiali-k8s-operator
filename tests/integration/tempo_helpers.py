@@ -29,7 +29,7 @@ TEMPO_WORKER_K8S = CharmDeploymentConfiguration(
 S3_INTEGRATOR = CharmDeploymentConfiguration(
     entity_url="s3-integrator",
     application_name="s3-integrator",
-    channel="2/edge",
+    channel="1/edge",
     trust=False,
 )
 
