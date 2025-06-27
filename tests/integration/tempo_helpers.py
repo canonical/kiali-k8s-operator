@@ -7,7 +7,7 @@ import copy
 from dataclasses import asdict
 
 from minio import Minio
-from ops import Application, Unit
+from ops import Application
 from pytest_operator.plugin import OpsTest
 
 from tests.integration.helpers import CharmDeploymentConfiguration
@@ -29,7 +29,7 @@ TEMPO_WORKER_K8S = CharmDeploymentConfiguration(
 S3_INTEGRATOR = CharmDeploymentConfiguration(
     entity_url="s3-integrator",
     application_name="s3-integrator",
-    channel="1/edge",
+    channel="2/edge",
     trust=False,
 )
 
@@ -39,6 +39,14 @@ MINIO = CharmDeploymentConfiguration(
     channel="latest/edge",
     trust=True,
 )
+
+ACCESS_KEY = "accesskey"
+SECRET_KEY = "secretkey"
+S3_CREDENTIALS = {
+    "access-key": ACCESS_KEY,
+    "secret-key": SECRET_KEY,
+}
+
 
 
 async def deploy_monolithic_cluster(ops_test: OpsTest):
@@ -51,6 +59,12 @@ async def deploy_monolithic_cluster(ops_test: OpsTest):
     await ops_test.model.deploy(**asdict(TEMPO_WORKER_K8S))
     await ops_test.model.deploy(**asdict(S3_INTEGRATOR))
 
+    await deploy_and_configure_minio(
+        s3_integrator=s3_integrator_name,
+        bucket_name="tempo",
+        ops_test=ops_test,
+    )
+
     await ops_test.model.integrate(
         coordinator_name + ":s3", s3_integrator_name + ":s3-credentials"
     )
@@ -58,17 +72,6 @@ async def deploy_monolithic_cluster(ops_test: OpsTest):
         coordinator_name + ":tempo-cluster", worker_name + ":tempo-cluster"
     )
 
-    access_key = "minio123"
-    secret_key = "minio123"
-    bucket_name = "tempo"
-
-    await deploy_and_configure_minio(
-        s3_integrator=s3_integrator_name,
-        access_key=access_key,
-        secret_key=secret_key,
-        bucket_name=bucket_name,
-        ops_test=ops_test,
-    )
     async with ops_test.fast_forward():
         await ops_test.model.wait_for_idle(
             apps=[coordinator_name, worker_name, s3_integrator_name],
@@ -81,16 +84,12 @@ async def deploy_monolithic_cluster(ops_test: OpsTest):
 
 
 async def deploy_and_configure_minio(
-    s3_integrator, access_key, secret_key, bucket_name, ops_test: OpsTest
+    s3_integrator, bucket_name, ops_test: OpsTest
 ):
     """Deploy and configure minio for tempo."""
     minio_name = MINIO.application_name
-    config = {
-        "access-key": access_key,
-        "secret-key": secret_key,
-    }
     minio_with_config = copy.deepcopy(MINIO)
-    minio_with_config.config = config
+    minio_with_config.config = S3_CREDENTIALS
 
     await ops_test.model.deploy(**asdict(minio_with_config))
     await ops_test.model.wait_for_idle(apps=[minio_name], status="active", timeout=2000)
@@ -98,8 +97,7 @@ async def deploy_and_configure_minio(
 
     mc_client = Minio(
         f"{minio_addr}:9000",
-        access_key=access_key,
-        secret_key=secret_key,
+        **{key.replace("-", "_"): value for key, value in S3_CREDENTIALS.items()},
         secure=False,
     )
 
@@ -110,18 +108,21 @@ async def deploy_and_configure_minio(
 
     # configure s3-integrator
     s3_integrator_app: Application = ops_test.model.applications[s3_integrator]
-    s3_integrator_leader: Unit = s3_integrator_app.units[0]
+
+    secret_uri = await ops_test.juju(
+        "add-secret",
+        f"{s3_integrator_app}-creds",
+        *(f"{key}={val}" for key, val in S3_CREDENTIALS.items()),
+    )
+    await ops_test.juju("grant-secret", f"{s3_integrator_app}-creds", s3_integrator_app)
 
     await s3_integrator_app.set_config(
         {
             "endpoint": f"minio-0.minio-endpoints.{ops_test.model.name}.svc.cluster.local:9000",
             "bucket": bucket_name,
+            "credentials": secret_uri.strip(),
         }
     )
-
-    action = await s3_integrator_leader.run_action("sync-s3-credentials", **config)
-    action_result = await action.wait()
-    assert action_result.status == "completed"
 
 
 async def get_unit_address(ops_test: OpsTest, app_name, unit_no):
