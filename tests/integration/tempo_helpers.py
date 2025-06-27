@@ -109,7 +109,7 @@ async def deploy_and_configure_minio(
     # configure s3-integrator
     s3_integrator_app: Application = ops_test.model.applications[s3_integrator]
 
-    secret_uri = await ops_test.juju(
+    _, secret_uri, _ = await ops_test.juju(
         "add-secret",
         f"{s3_integrator_app}-creds",
         *(f"{key}={val}" for key, val in S3_CREDENTIALS.items()),
