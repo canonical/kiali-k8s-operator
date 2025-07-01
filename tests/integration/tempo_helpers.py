@@ -7,7 +7,7 @@ import copy
 from dataclasses import asdict
 
 from minio import Minio
-from ops import Application, Unit
+from ops import Application
 from pytest_operator.plugin import OpsTest
 
 from tests.integration.helpers import CharmDeploymentConfiguration
@@ -15,21 +15,21 @@ from tests.integration.helpers import CharmDeploymentConfiguration
 TEMPO_COORDINATOR_K8S = CharmDeploymentConfiguration(
     entity_url="tempo-coordinator-k8s",
     application_name="tempo-coordinator-k8s",
-    channel="2/edge",
+    channel="1/edge",
     trust=True,
 )
 
 TEMPO_WORKER_K8S = CharmDeploymentConfiguration(
     entity_url="tempo-worker-k8s",
     application_name="tempo-worker-k8s",
-    channel="2/edge",
+    channel="1/edge",
     trust=True,
 )
 
 S3_INTEGRATOR = CharmDeploymentConfiguration(
     entity_url="s3-integrator",
     application_name="s3-integrator",
-    channel="1/edge",
+    channel="2/edge",
     trust=False,
 )
 
@@ -39,6 +39,8 @@ MINIO = CharmDeploymentConfiguration(
     channel="latest/edge",
     trust=True,
 )
+
+S3_CREDENTIALS_SECRET_LABEL = "s3-credentials"
 
 
 async def deploy_monolithic_cluster(ops_test: OpsTest):
@@ -110,18 +112,27 @@ async def deploy_and_configure_minio(
 
     # configure s3-integrator
     s3_integrator_app: Application = ops_test.model.applications[s3_integrator]
-    s3_integrator_leader: Unit = s3_integrator_app.units[0]
+    s3_integrator_app_name = S3_INTEGRATOR.application_name
+
+    credentials_secret_id = await ops_test.model.add_secret(
+        name=S3_CREDENTIALS_SECRET_LABEL,
+        data_args=[
+            f"access-key={config.get('access-key')}",
+            f"secret-key={config.get('secret-key')}",
+        ]
+    )
+    await ops_test.model.grant_secret(
+        secret_name=S3_CREDENTIALS_SECRET_LABEL,
+        application=s3_integrator_app_name,
+    )
 
     await s3_integrator_app.set_config(
         {
             "endpoint": f"minio-0.minio-endpoints.{ops_test.model.name}.svc.cluster.local:9000",
             "bucket": bucket_name,
+            "credentials": credentials_secret_id,
         }
     )
-
-    action = await s3_integrator_leader.run_action("sync-s3-credentials", **config)
-    action_result = await action.wait()
-    assert action_result.status == "completed"
 
 
 async def get_unit_address(ops_test: OpsTest, app_name, unit_no):

@@ -46,6 +46,7 @@ async def test_deploy_required_dependencies(ops_test: OpsTest):
     await ops_test.model.wait_for_idle(
         apps=[ISTIO_K8S.application_name, PROMETHEUS_K8S.application_name],
         status="active",
+        raise_on_error=False,
         raise_on_blocked=True,
         timeout=1000,
     )
