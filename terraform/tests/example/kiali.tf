@@ -84,12 +84,12 @@ resource "juju_integration" "kiali_prometheus" {
   model = juju_model.kiali_test.name
 
   application {
-    name = module.kiali.app_name
+    name     = module.kiali.app_name
     endpoint = module.kiali.endpoints.prometheus-api
   }
 
   application {
-    name = module.prometheus.app_name
+    name     = module.prometheus.app_name
     endpoint = module.prometheus.endpoints.prometheus_api
   }
 }
@@ -98,12 +98,12 @@ resource "juju_integration" "kiali_istio_metadata" {
   model = juju_model.kiali_test.name
 
   application {
-    name = module.kiali.app_name
+    name     = module.kiali.app_name
     endpoint = module.kiali.endpoints.istio-metadata
   }
 
   application {
-    name = module.istio.app_name
+    name     = module.istio.app_name
     endpoint = module.istio.endpoints.istio_metadata
   }
 }
