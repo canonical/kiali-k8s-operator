@@ -14,7 +14,7 @@ import ops
 import requests
 import yaml
 from charms.grafana_k8s.v0.grafana_metadata import GrafanaMetadataAppData, GrafanaMetadataRequirer
-from charms.istio_beacon_k8s.v0.service_mesh import ServiceMeshConsumer
+from charms.istio_beacon_k8s.v0.service_mesh import ServiceMeshConsumer, UnitPolicy
 from charms.istio_k8s.v0.istio_metadata import IstioMetadataRequirer
 from charms.loki_k8s.v1.loki_push_api import LogForwarder
 from charms.mimir_coordinator_k8s.v0.prometheus_api import PrometheusApiRequirer
@@ -46,6 +46,7 @@ SOURCE_PATH = Path(__file__).parent
 
 KIALI_CONFIG_PATH = Path("/kiali-configuration/config.yaml")
 KIALI_PORT = 20001
+KIALI_METRICS_PORT = 9090
 KIALI_PEBBLE_SERVICE_NAME = "kiali"
 ISTIO_RELATION = "istio-metadata"
 PROMETHEUS_RELATION = "prometheus-api"
@@ -81,7 +82,7 @@ class KialiCharm(ops.CharmBase):
         # O11y Integration
         self._scraping = MetricsEndpointProvider(
             self,
-            jobs=[{"static_configs": [{"targets": ["*:9090"]}]}],
+            jobs=[{"static_configs": [{"targets": [f"*:{KIALI_METRICS_PORT}"]}]}],
         )
         self._logging = LogForwarder(self)
 
@@ -102,7 +103,15 @@ class KialiCharm(ops.CharmBase):
         self.framework.observe(self.on[PROMETHEUS_RELATION].relation_broken, self.reconcile)
 
         # Connection to the service mesh
-        self._mesh = ServiceMeshConsumer(self)
+        self._mesh = ServiceMeshConsumer(
+            self,
+            policies=[
+                UnitPolicy(
+                    relation="metrics-endpoint",
+                    ports=[KIALI_METRICS_PORT],
+                ),
+            ],
+        )
 
         # Connection to istio-k8s
         self._istio_metadata = IstioMetadataRequirer(self.model.relations, ISTIO_RELATION)
