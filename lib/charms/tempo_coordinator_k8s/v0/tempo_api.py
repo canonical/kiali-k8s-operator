@@ -99,7 +99,7 @@ LIBAPI = 0
 
 # Increment this PATCH version before using `charmcraft publish-lib` or reset
 # to 0 if you are raising the major API version
-LIBPATCH = 2
+LIBPATCH = 3
 
 PYDEPS = ["pydantic>=2"]
 
@@ -171,8 +171,6 @@ class TempoApiRequirer:
         """Return the relation instances for applications related to us on the monitored relation."""
         return self._charm_relation_mapping.get(self._relation_name, [])
 
-    # TODO: Revert the below manual change once https://github.com/canonical/tempo-coordinator-k8s-operator/pull/142
-    #  lands
     def get_data(self) -> Optional[TempoApiAppData]:
         """Return data from the relation.
 
