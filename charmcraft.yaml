@@ -98,4 +98,4 @@ resources:
   kiali-image:
     type: oci-image
     description: Kiali OCI image
-    upstream-source: quay.io/kiali/kiali:v2.7.1
+    upstream-source: docker.io/ubuntu/kiali:2.3.0-24.04_stable
