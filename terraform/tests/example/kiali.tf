@@ -3,7 +3,7 @@ terraform {
   required_providers {
     juju = {
       source  = "juju/juju"
-      version = ">= 0.14.0"
+      version = "~> 1.0"
     }
   }
 }
@@ -46,11 +46,11 @@ module "istio" {
 
 # Deploy Prometheus using the prometheus-k8s-operator module
 module "prometheus" {
-  source   = "git::https://github.com/canonical/prometheus-k8s-operator//terraform"
-  model    = juju_model.kiali_test.name
-  channel  = "2/edge"
-  app_name = "prometheus"
-  units    = 1
+  source     = "git::https://github.com/canonical/prometheus-k8s-operator//terraform"
+  model_uuid = juju_model.kiali_test.uuid
+  channel    = "2/edge"
+  app_name   = "prometheus"
+  units      = 1
 }
 
 # Deploy Istio Ingress using the module (depends on Istio being deployed first)
@@ -58,7 +58,7 @@ module "kiali" {
   source = "../.."
 
   # Required: reference to the model
-  model = juju_model.kiali_test.name
+  model_uuid = juju_model.kiali_test.uuid
 
   # Required: specify the channel
   channel = "2/edge"
@@ -118,3 +118,4 @@ output "kiali_endpoints" {
   value       = module.kiali.endpoints
   description = "Available endpoints for the application"
 }
+

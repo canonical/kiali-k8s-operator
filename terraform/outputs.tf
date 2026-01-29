@@ -1,5 +1,5 @@
 output "app_name" {
-  value = juju_application.this_app.name
+  value = juju_application.kiali.name
 }
 
 output "endpoints" {
