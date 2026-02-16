@@ -24,7 +24,7 @@ class CharmDeploymentConfiguration:
     application_name: str
     channel: str
     trust: bool
-    revision: optional[int] = None
+    revision: Optional[int] = None
     config: Optional[dict] = None
 
 
