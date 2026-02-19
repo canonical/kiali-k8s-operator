@@ -29,7 +29,7 @@ TEMPO_WORKER_K8S = CharmDeploymentConfiguration(
 S3_INTEGRATOR = CharmDeploymentConfiguration(
     entity_url="s3-integrator",
     application_name="s3-integrator",
-    channel="2/stable",
+    channel="2/edge",
     revision=157,
     trust=False,
 )
@@ -120,7 +120,7 @@ async def deploy_and_configure_minio(
         data_args=[
             f"access-key={config.get('access-key')}",
             f"secret-key={config.get('secret-key')}",
-        ]
+        ],
     )
     await ops_test.model.grant_secret(
         secret_name=S3_CREDENTIALS_SECRET_LABEL,
