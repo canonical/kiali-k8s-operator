@@ -2,9 +2,16 @@ output "app_name" {
   value = juju_application.kiali.name
 }
 
-output "endpoints" {
+output "provides" {
   value = {
-    # Requires
+    metrics-endpoint          = "metrics-endpoint"
+    provide-cmr-mesh          = "provide-cmr-mesh"
+    tempo-datasource-exchange = "tempo-datasource-exchange"
+  }
+}
+
+output "requires" {
+  value = {
     grafana-metadata = "grafana-metadata"
     ingress          = "ingress"
     istio-metadata   = "istio-metadata"
@@ -13,10 +20,5 @@ output "endpoints" {
     require-cmr-mesh = "require-cmr-mesh"
     service-mesh     = "service-mesh"
     tempo-api        = "tempo-api"
-
-    # Provides
-    metrics-endpoint          = "metrics-endpoint"
-    provide-cmr-mesh          = "provide-cmr-mesh"
-    tempo-datasource-exchange = "tempo-datasource-exchange"
   }
 }
