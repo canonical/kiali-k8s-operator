@@ -5,7 +5,7 @@
 [project]
 name = "kiali-k8s"
 version = "0.0"
-requires-python = "~=3.8"
+requires-python = ">=3.12"
 
 dependencies = [
     "cosl",
@@ -22,7 +22,7 @@ dev = [
     "black",
     "codespell",
     # Static
-    "pyright<1.1.399", # 1.1.399 vendors typeshed that dropped Python 3.8 support
+    "pyright",
     # Unit
     "pytest",
     "pytest-mock",
@@ -52,11 +52,12 @@ asyncio_mode = "auto"
 # Formatting tools configuration
 [tool.black]
 line-length = 99
-target-version = ["py38"]
+target-version = ["py312"]
 
 # Linting tools configuration
 [tool.ruff]
 line-length = 99
+target-version = "py312"
 
 [tool.ruff.lint]
 exclude = ["__pycache__", "*.egg_info"]
