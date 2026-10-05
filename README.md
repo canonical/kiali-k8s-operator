@@ -1,3 +1,8 @@
+> [!IMPORTANT]
+> Moved to https://github.com/canonical/service-mesh/tree/main/charms/kiali-k8s.
+> This repo is no longer maintained.
+
+
 # Kiali Charmed Operator for Kubernetes
 
 [![CharmHub Badge](https://charmhub.io/kiali-k8s/badge.svg)](https://charmhub.io/kiali-k8s)
